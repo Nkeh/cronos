@@ -129,14 +129,21 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant C as User's cron
+  participant C as User cron job
   participant A as api
   participant DB as Postgres
-  participant R as Runner (sweep)
-  C->>A: GET /ping/{slug} or /ping/{slug}/fail
-  A->>DB: one UPDATE: last_ping_at, status; resolve or open incident + outbox
-  loop every 15s
-    R->>DB: UPDATE up heartbeats past greatest(last_ping, ingest_recovered) + period + grace to missed RETURNING
+  participant R as Runner sweep
+  C->>A: GET /ping/slug (success) or /ping/slug/fail
+  A->>DB: one txn - UPDATE last_ping_at and status
+  alt success ping and an incident is open
+    A->>DB: resolve incident + outbox rows
+  else fail ping
+    A->>DB: open incident (fail_ping) + outbox rows
+  end
+  A-->>C: 200 OK (always, even for unknown slugs)
+  loop every 15s, one runner via advisory lock
+    R->>DB: mark up heartbeats missed when now is past greatest(last_ping_at, ingest_recovered_at) + period + grace
+    DB-->>R: RETURNING ids of newly missed heartbeats
     R->>DB: open missed incidents + outbox rows
   end
 ```
@@ -365,7 +372,7 @@ Anomaly flags are advisory in v1 — a dashboard badge, never an alert — until
 
 ## 9. UI and experience design
 
-Cronos should feel like a live instrument panel: dark-first, glowing status colour, motion that explains state changes, and a floating bottom navbar as its signature. It draws on the visual language of [bonyaransom.me](https://www.bonyaransom.me/), so Cronos reads as part of the same body of work.
+Cronos should feel like a live instrument panel: first-class dark and light themes, glowing status colour, motion that explains state changes, and a floating bottom navbar as its signature. It draws on the visual language of [bonyaransom.me](https://www.bonyaransom.me/), so Cronos reads as part of the same body of work.
 
 **Design source.** Only the portfolio's structure could be read from here, not its colours or fonts. On day 1, Claude Code uses Playwright to screenshot the portfolio (desktop and mobile, light and dark if offered) and extract computed styles — font families, type scale, palette, radii, shadows, blur, transition timings — into `frontend/design/tokens.md` for Oryn to approve. Motifs to carry over:
 
@@ -373,6 +380,25 @@ Cronos should feel like a live instrument panel: dark-first, glowing status colo
 - A small eyebrow line above each heading: "Live checks", "What broke", "Dead man's switches".
 - Pill badges with a status dot, as in "Open to Work" — here "All systems up", "2 down", "Degraded".
 - Chip rows and animated progress bars, reused as uptime and plan-usage bars.
+
+**Identity (from the day 1 extraction).** Syne for display headings, Outfit for interface text, DM Mono for body copy and every number (tabular figures), 2px corners on surfaces, cards and inputs, and one glow shadow recipe. Exact values live in `frontend/design/tokens.md`.
+
+**Colour roles.**
+
+- Green `#00C853` means up/healthy and doubles as Cronos's brand glow. It is used only for status and brand marks, never for buttons or links.
+- A separate cool interactive accent, chosen on day 5, covers buttons, links, focus rings, selected states and the navbar's active pill, so nothing clickable reads as a status.
+- Status set: up green, down red, degraded amber, paused grey. Each has a dot/glow variant and a text-safe variant.
+- Status is never colour alone: it always pairs with an icon or label.
+
+**Two themes.**
+
+- Dark (the portfolio's look) and light are both first-class. The default follows the OS (`prefers-color-scheme`); a toggle in the Account menu and command palette overrides it, remembered per browser.
+- Tokens are CSS variables with a dark set and a light set; components never use raw colour values.
+- The light theme is Cronos's own design, since the portfolio has none. It keeps the same fonts, corners, motion and colour roles. Glows become tinted rings and soft shadows, and the glass navbar uses a light translucent surface.
+- Status and accent colours have per-theme values. `#00C853` is too light for text on white, so the light theme uses a darker green for text and keeps the bright green for dots and glows.
+- An inline script in `index.html` applies the theme before first paint, so there is no flash of the wrong theme.
+- Public status pages follow the viewer's OS theme.
+- Screenshot checks cover both themes: 3 widths × 2 themes × reduced motion on and off.
 
 **Floating bottom navbar (signature).**
 
@@ -646,7 +672,7 @@ If a day slips, cut in this order: anomaly detection, SSE, private status pages.
 | Retention | Free: 7 days raw, 30 days hourly. Pro: 30 days raw, 365 days hourly |
 | Alert delivery | Transactional outbox drained by a notifier process |
 | Redis role | Non-critical; fail-open rate limits and caches only |
-| UI direction | Portfolio-derived tokens, dark-first, floating bottom navbar, Motion |
+| UI direction | Portfolio-derived tokens; dark and light themes; green reserved for status with a separate interactive accent; floating bottom navbar; Motion |
 | Monetisation | v1: one generous launch plan, no gating. v2: tiers and billing; users pay or move to free, with 30 days' notice |
 
 **Open questions**
