@@ -1,0 +1,12 @@
+[project]
+name = "cronos-chaos"
+version = "0.1.0"
+description = "Tiny misbehaving-website service used to drive engine/SSRF tests"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.142.2",
+    "uvicorn[standard]==0.54.0",
+]
+
+[tool.uv]
+package = false

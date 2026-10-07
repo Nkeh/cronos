@@ -1,0 +1,126 @@
+name: cronos
+
+networks:
+  # Postgres and Redis live here. internal: true means no host access and no
+  # internet egress — defence in depth on top of "nothing publishes a port".
+  data:
+    driver: bridge
+    internal: true
+  default:
+    driver: bridge
+
+volumes:
+  pg_data:
+
+services:
+  db:
+    image: postgres:16@sha256:42df6755a4110ea9e324bfaefd02eb2f6afc0f0b9bc063c55c9f73dc29d25770
+    networks: [data]
+    env_file: .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ./backend
+    image: cronos-backend:dev
+    networks: [data]
+    env_file: .env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+    image: cronos-backend:dev
+    networks: [data, default]
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python3", "healthcheck_http.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  runner:
+    build:
+      context: ./backend
+    image: cronos-backend:dev
+    networks: [data, default]
+    env_file: .env
+    command: ["python", "-m", "app.engine.runner"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python3", "healthcheck_alive.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  notifier:
+    build:
+      context: ./backend
+    image: cronos-backend:dev
+    networks: [data, default]
+    env_file: .env
+    command: ["python", "-m", "app.notifier"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python3", "healthcheck_alive.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine@sha256:1a81ac3d1a49b2b385a5bfafb8bd39fb40fa1d717461d825ee0d65df91a6e97b
+    networks: [default]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s

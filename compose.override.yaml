@@ -1,0 +1,85 @@
+volumes:
+  frontend_node_modules:
+
+services:
+  # ---- dev conveniences on top of the prod-shaped services in compose.yaml ----
+
+  api:
+    volumes:
+      - ./backend:/app
+    environment:
+      WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/app/app",
+      ]
+
+  caddy:
+    ports:
+      - "8080:8080"
+
+  # ---- dev: mailpit, chaos, the Vite dev server, published ports ----
+
+  mailpit:
+    image: axllent/mailpit:latest@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+    networks: [default]
+    ports:
+      - "8026:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chaos:
+    build:
+      context: ./chaos
+    image: cronos-chaos:dev
+    networks: [default]
+    healthcheck:
+      test: ["CMD", "python3", "healthcheck_http.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+    image: cronos-frontend:dev
+    networks: [default]
+    env_file: .env
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:5173', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Design-token extraction only: `docker compose --profile tools run --rm playwright`.
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+    profiles: ["tools"]
+    networks: [default]
+    working_dir: /work
+    volumes:
+      - ./frontend:/work/frontend
+      - frontend_node_modules:/work/frontend/node_modules
+    command: ["node", "frontend/design/extract-tokens.mjs"]
