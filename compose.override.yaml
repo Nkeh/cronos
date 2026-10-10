@@ -22,6 +22,48 @@ services:
         "/app/app",
       ]
 
+  # migrate/runner/notifier share the same image as api but have no uvicorn
+  # --reload of their own; bind-mounting ./backend here (not /opt/venv, which
+  # stays image-baked) is what makes their code live without a rebuild.
+  # runner/notifier additionally run under the `watchfiles` CLI so they
+  # actually restart on a change, the equivalent of uvicorn's --reload for a
+  # plain tick-loop process.
+  migrate:
+    volumes:
+      - ./backend:/app
+
+  runner:
+    volumes:
+      - ./backend:/app
+    environment:
+      WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+    command:
+      [
+        "watchfiles",
+        "--filter",
+        "python",
+        "--target-type",
+        "command",
+        "python -m app.engine.runner",
+        "/app/app",
+      ]
+
+  notifier:
+    volumes:
+      - ./backend:/app
+    environment:
+      WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+    command:
+      [
+        "watchfiles",
+        "--filter",
+        "python",
+        "--target-type",
+        "command",
+        "python -m app.notifier",
+        "/app/app",
+      ]
+
   caddy:
     ports:
       - "8080:8080"

@@ -17,15 +17,15 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.core.config import get_settings
+from app.db.base import Base
+from app.db import models as _all_models  # noqa: F401 -- populates Base.metadata
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Day 2 introduces the real declarative Base/metadata for autogenerate; the
-# baseline revision needs none.
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def get_url() -> str:

@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.clock import FrozenClock
 from app.core.config import get_settings
+from app.core.db import create_engine
 from app.main import create_app
 
 
@@ -45,3 +47,23 @@ async def client() -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 def frozen_clock() -> FrozenClock:
     return FrozenClock(at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+
+@pytest.fixture(scope="session")
+def db_engine() -> AsyncEngine:
+    """The same UTC-pinned engine construction the app itself uses.
+
+    Session-scoped to match asyncio_default_fixture_loop_scope="session" —
+    a per-test engine would mean a new asyncpg connection pool per test,
+    which is the exact class of loop-mismatch bug Day 1 already hit once.
+    """
+    return create_engine(get_settings())
+
+
+@pytest_asyncio.fixture
+async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        db_engine, expire_on_commit=False
+    )
+    async with session_factory() as session:
+        yield session
