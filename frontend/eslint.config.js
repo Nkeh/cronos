@@ -12,4 +12,12 @@ export default tseslint.config(
       globals: globals.browser,
     },
   },
+  {
+    // Node-run scripts (design-token extraction, contact-sheet builder) that also use
+    // `page.evaluate()` browser-context closures, hence both global sets.
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
 )

@@ -13,6 +13,8 @@ dist/
 coverage/
 playwright-report/
 test-results/
+*.tsbuildinfo
+frontend/tests/screenshots/
 
 # Env
 .env

@@ -1,4 +1,279 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
-/* Day 5 replaces this with the approved token system (@theme, motion tokens,
-   status colours) once frontend/design/tokens.md is signed off. */
+/* Self-hosted variable/static font files — see frontend/design/tokens.md for the licence note
+   (all three are Google Fonts under SIL OFL 1.1). No requests ever leave the origin. */
+@import '@fontsource-variable/syne';
+@import '@fontsource-variable/outfit';
+@import '@fontsource/dm-mono/400.css';
+@import '@fontsource/dm-mono/500.css';
+
+/*
+ * Theme architecture
+ * ------------------
+ * `:root` carries the light palette (the default). `:root[data-theme="dark"]` is the explicit
+ * toggle. A `prefers-color-scheme: dark` media query — guarded by `:not([data-theme="light"])` —
+ * covers the default "system" case, which never gets a `data-theme` attribute at all (see the
+ * inline script in index.html). This is the same pattern Artifacts use for theme-awareness.
+ */
+
+:root {
+  /* ---- Light theme (cool off-white base) ---- */
+  --bg: #f7f9f7;
+  --surface: #ffffff;
+  --surface-raised: #eff3ef;
+  --border: rgba(0, 150, 64, 0.22);
+  --border-subtle: rgba(0, 150, 64, 0.12);
+  --border-strong: rgba(0, 150, 64, 0.4);
+  --text: #0b140b;
+  --text-muted: #3f4f3f;
+
+  --accent: #2563eb;
+  --accent-solid: #2563eb;
+  --accent-fg: #ffffff;
+  --focus-ring: #2563eb;
+
+  --status-up-dot: #00c853;
+  --status-up-text: #00a847;
+  --status-down-dot: #ff6e6e;
+  --status-down-text: #c9372c;
+  --status-degraded-dot: #ffc24b;
+  --status-degraded-text: #946800;
+  --status-paused-dot: #9ca3af;
+  --status-paused-text: #5b6472;
+
+  /* Light theme trades the dark glow for a tinted ring + soft shadow, per CLAUDE.md. */
+  --glow: 0 0 0 3px rgba(0, 168, 71, 0.16), 0 2px 10px 0 rgba(11, 20, 11, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(0, 150, 64, 0.22);
+  --glass-blur: 16px;
+
+  --ambient-grid: rgba(0, 150, 64, 0.05);
+  --ambient-glow: rgba(37, 99, 235, 0.12);
+
+  --font-display: 'Syne Variable', sans-serif;
+  --font-body: 'Outfit Variable', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #080a08;
+    --surface: #111611;
+    --surface-raised: #1a221a;
+    --border: rgba(0, 200, 83, 0.15);
+    --border-subtle: rgba(0, 200, 83, 0.08);
+    --border-strong: rgba(0, 200, 83, 0.35);
+    --text: #f0f5f0;
+    --text-muted: #8a9e8a;
+
+    --accent: #3b82f6;
+    --accent-solid: #2563eb;
+    --accent-fg: #ffffff;
+    --focus-ring: #3b82f6;
+
+    --status-up-dot: #00c853;
+    --status-up-text: #00c853;
+    --status-down-dot: #ff6e6e;
+    --status-down-text: #ff6e6e;
+    --status-degraded-dot: #ffc24b;
+    --status-degraded-text: #ffc24b;
+    --status-paused-dot: #9ca3af;
+    --status-paused-text: #9ca3af;
+
+    --glow: 0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
+    --glass-bg: rgba(17, 22, 17, 0.6);
+    --glass-border: rgba(0, 200, 83, 0.15);
+    --glass-blur: 16px;
+
+    --ambient-grid: rgba(0, 200, 83, 0.06);
+    --ambient-glow: rgba(59, 130, 246, 0.14);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #080a08;
+  --surface: #111611;
+  --surface-raised: #1a221a;
+  --border: rgba(0, 200, 83, 0.15);
+  --border-subtle: rgba(0, 200, 83, 0.08);
+  --border-strong: rgba(0, 200, 83, 0.35);
+  --text: #f0f5f0;
+  --text-muted: #8a9e8a;
+
+  --accent: #3b82f6;
+  --accent-solid: #2563eb;
+  --accent-fg: #ffffff;
+  --focus-ring: #3b82f6;
+
+  --status-up-dot: #00c853;
+  --status-up-text: #00c853;
+  --status-down-dot: #ff6e6e;
+  --status-down-text: #ff6e6e;
+  --status-degraded-dot: #ffc24b;
+  --status-degraded-text: #ffc24b;
+  --status-paused-dot: #9ca3af;
+  --status-paused-text: #9ca3af;
+
+  --glow: 0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
+  --glass-bg: rgba(17, 22, 17, 0.6);
+  --glass-border: rgba(0, 200, 83, 0.15);
+  --glass-blur: 16px;
+
+  --ambient-grid: rgba(0, 200, 83, 0.06);
+  --ambient-glow: rgba(59, 130, 246, 0.14);
+}
+
+/*
+ * Tailwind v4 theme mapping. `@theme inline` keeps every value as a live `var(...)` reference
+ * instead of resolving it at build time, so utility classes (bg-surface, text-status-up-text, …)
+ * track the cascade above and flip instantly when `data-theme` changes or the OS scheme changes.
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+
+  --color-accent: var(--accent);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-fg: var(--accent-fg);
+  --color-focus-ring: var(--focus-ring);
+
+  --color-status-up-dot: var(--status-up-dot);
+  --color-status-up-text: var(--status-up-text);
+  --color-status-down-dot: var(--status-down-dot);
+  --color-status-down-text: var(--status-down-text);
+  --color-status-degraded-dot: var(--status-degraded-dot);
+  --color-status-degraded-text: var(--status-degraded-text);
+  --color-status-paused-dot: var(--status-paused-dot);
+  --color-status-paused-text: var(--status-paused-text);
+
+  --color-glass-bg: var(--glass-bg);
+  --color-glass-border: var(--glass-border);
+
+  --shadow-glow: var(--glow);
+  --blur-glass: var(--glass-blur);
+
+  /* 2px corners on surfaces/cards/inputs (CLAUDE.md); rounded-full stays Tailwind's default. */
+  --radius-sm: 2px;
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  /* Compound type-scale tokens (size + line-height + letter-spacing + weight together). */
+  --text-display-1: 72px;
+  --text-display-1--line-height: 72px;
+  --text-display-1--letter-spacing: -1.44px;
+  --text-display-1--font-weight: 700;
+
+  --text-display-2: 48px;
+  --text-display-2--line-height: 48px;
+  --text-display-2--letter-spacing: -0.96px;
+  --text-display-2--font-weight: 700;
+
+  --text-heading-3: 16px;
+  --text-heading-3--line-height: 20px;
+  --text-heading-3--letter-spacing: -0.32px;
+  --text-heading-3--font-weight: 700;
+
+  --text-eyebrow: 13px;
+  --text-eyebrow--line-height: 16px;
+  --text-eyebrow--letter-spacing: 0.08em;
+  --text-eyebrow--font-weight: 600;
+
+  --text-body: 16px;
+  --text-body--line-height: 27.2px;
+  --text-body--letter-spacing: normal;
+  --text-body--font-weight: 400;
+
+  --text-mono: 16px;
+  --text-mono--line-height: 27.2px;
+  --text-mono--letter-spacing: -0.4px;
+  --text-mono--font-weight: 400;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+/* DM Mono carries every number in the app — tabular figures so digits never jiggle width. */
+.font-mono,
+[data-numeric] {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Ambient background: one faint grid plus a soft radial glow, both pure CSS, fixed behind all
+ * content. The only animation is a slow opacity breathe, switched off under reduced motion.
+ */
+.ambient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--ambient-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ambient-grid) 1px, transparent 1px),
+    radial-gradient(ellipse 60% 40% at 50% -10%, var(--ambient-glow), transparent 70%);
+  background-size:
+    48px 48px,
+    48px 48px,
+    100% 100%;
+  animation: ambient-breathe 20s ease-in-out infinite;
+}
+
+@keyframes ambient-breathe {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Skeleton shimmer — a moving highlight sweep, never a spinner. */
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--surface-raised) 0%,
+    var(--surface) 50%,
+    var(--surface-raised) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-bg {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

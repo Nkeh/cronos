@@ -123,3 +123,20 @@ services:
       - ./frontend:/work/frontend
       - frontend_node_modules:/work/frontend/node_modules
     command: ["node", "frontend/design/extract-tokens.mjs"]
+
+  # E2E/axe/screenshot-matrix suite: `docker compose --profile tools run --rm pw-tests`.
+  # network_mode shares caddy's network namespace (not its own "default"-network membership) so
+  # the browser's Origin is http://localhost:8080, matching PUBLIC_ORIGIN and passing the CSRF
+  # Origin check; it also resolves other services (mailpit, etc.) exactly as caddy does.
+  pw-tests:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+    profiles: ["tools"]
+    network_mode: "service:caddy"
+    depends_on:
+      caddy:
+        condition: service_healthy
+    working_dir: /work/frontend
+    volumes:
+      - ./frontend:/work/frontend
+      - frontend_node_modules:/work/frontend/node_modules
+    command: ["npx", "playwright", "test"]

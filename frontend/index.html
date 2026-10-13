@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cronos</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('cronos-theme');
+          if (stored === 'light' || stored === 'dark') {
+            document.documentElement.setAttribute('data-theme', stored);
+          }
+        } catch (e) {
+          /* localStorage unavailable (private mode, blocked storage) — fall back to system. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -97,121 +97,146 @@ rather than guessing its styling.
 
 ---
 
-## Part 2 — Proposed Cronos tokens (awaiting Oryn's approval)
+## Part 2 — Approved Cronos tokens (Day 5, Oryn's sign-off via AskUserQuestion)
 
-**Open question carried over from SRS §17**: should Cronos match this palette exactly, or take
-its own accent within the same system? The proposal below **reuses the observed system directly**
-(same green, same near-black scale) rather than inventing a new accent, since Cronos is explicitly
-meant to read as "part of the same body of work." Swap `--cronos-accent` for a different hue below
-if Oryn prefers Cronos to stand apart.
+**Accent (SRS §17 question, resolved)**: Cronos does **not** reuse the portfolio's green as its
+interactive accent — CLAUDE.md reserves green exclusively for status/brand, and requires "a
+separate cool interactive accent" for buttons/links/focus rings/the active nav pill. Chosen:
+**Electric Blue** — dark `#3B82F6` (~11:1 on `#080A08`), light `#2563EB` (~4.8:1 on white).
+Filled-button surfaces use a darker `--accent-solid: #2563EB` in both themes (white text on the
+bare dark-theme accent would only be ~3.7:1, failing AA; `#2563EB` with white text clears ~4.8:1
+in both themes) — a judgment call made during implementation, not re-asked.
 
-The source site is dark-only; Cronos's own non-negotiable is just "dark-first," not
-light-and-dark, so **a light theme is proposed as optional/deferred** — a minimal skeleton is
-included below so Day 5 isn't starting from nothing if Oryn wants one, but building it out is not
-assumed.
+**Light theme (resolved)**: CLAUDE.md mandates two first-class themes, superseding this file's
+earlier "optional/deferred" framing — light is built out fully in Day 5, base **cool off-white**
+(`#F7F9F7` primary / `#FFFFFF` surface), as sketched below.
 
-### Dark theme (primary — adopted near-verbatim from Observed)
+**Badge/pill styling (resolved)**: none was found in the scrape (see Part 1), so Day 5 uses
+**outlined-with-dot** — transparent background, 1px border in the status colour, coloured dot +
+text — chosen for its minimal, hairline-consistent look and clean WCAG story in both themes.
 
-```css
---cronos-bg-primary:    #080A08;
---cronos-bg-surface:    #111611;
---cronos-bg-elevated:   #161D16;
---cronos-bg-card:       #1A221A;
+**Glass blur (resolved)**: `16px`, with an opaque `--glass-bg` fallback where `backdrop-filter`
+isn't supported.
 
---cronos-border-subtle:  rgba(0, 200, 83, 0.08);
---cronos-border-default: rgba(0, 200, 83, 0.15);
---cronos-border-strong:  rgba(0, 200, 83, 0.35);
-
---cronos-accent:        #00C853;  /* reused from the portfolio's --green */
---cronos-accent-bright: #00E676;
---cronos-accent-glow:   rgba(0, 200, 83, 0.25);
-
---cronos-text-primary:   #F0F5F0;
---cronos-text-secondary: #8A9E8A;
---cronos-text-muted:     #4A5E4A;
-```
-
-### Light theme (optional — skeleton only, not derived from any observed data)
+### Dark theme (adopted near-verbatim from Observed; accent is new, not reused green)
 
 ```css
---cronos-bg-primary:    #F7F9F7;
---cronos-bg-surface:    #FFFFFF;
---cronos-bg-elevated:   #FFFFFF;
---cronos-bg-card:       #EFF3EF;
+--bg:             #080A08;
+--surface:        #111611;
+--surface-raised: #1A221A;
 
---cronos-border-subtle:  rgba(0, 150, 64, 0.12);
---cronos-border-default: rgba(0, 150, 64, 0.22);
---cronos-border-strong:  rgba(0, 150, 64, 0.40);
+--border:         rgba(0, 200, 83, 0.15);
+--border-subtle:  rgba(0, 200, 83, 0.08);
+--border-strong:  rgba(0, 200, 83, 0.35);
 
---cronos-accent:        #00A847;  /* darkened for 4.5:1+ on a light surface */
---cronos-accent-bright: #00C853;
---cronos-accent-glow:   rgba(0, 150, 64, 0.18);
+--text:           #F0F5F0;
+--text-muted:     #8A9E8A;
 
---cronos-text-primary:   #0B140B;
---cronos-text-secondary: #3F4F3F;
---cronos-text-muted:     #6B7C6B;
+--accent:         #3B82F6;  /* Electric Blue — new, separate from brand green */
+--accent-solid:   #2563EB;  /* filled-button background, both themes (AA with white text) */
+--accent-fg:      #FFFFFF;
+--focus-ring:     #3B82F6;
+
+--status-up-dot:        #00C853;  --status-up-text:        #00C853;
+--status-down-dot:      #FF6E6E;  --status-down-text:      #FF6E6E;
+--status-degraded-dot:  #FFC24B;  --status-degraded-text:  #FFC24B;
+--status-paused-dot:    #9CA3AF;  --status-paused-text:    #9CA3AF;
+
+--glow:        0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
+--glass-bg:    rgba(17, 22, 17, 0.6);
+--glass-border: rgba(0, 200, 83, 0.15);
+--glass-blur:  16px;
 ```
 
-### Type scale (carried from Observed, renamed)
+### Light theme (cool off-white, built out fully — no longer optional)
 
 ```css
---cronos-font-display: "Syne", sans-serif;
---cronos-font-mono:    "DM Mono", monospace;
---cronos-font-body:    "Outfit", sans-serif;
+--bg:             #F7F9F7;
+--surface:        #FFFFFF;
+--surface-raised: #EFF3EF;
 
---cronos-text-display-1: 72px/72px;   letter-spacing: -1.44px; weight: 700; /* h1 */
---cronos-text-display-2: 48px/48px;   letter-spacing: -0.96px; weight: 700; /* h2 */
---cronos-text-eyebrow:   16px/20px;   letter-spacing: -0.32px; weight: 700; /* h3 / eyebrow */
---cronos-text-body:      16px/27.2px; letter-spacing: normal;  weight: 400;
---cronos-text-mono:      16px/27.2px; letter-spacing: -0.4px;  weight: 400; /* latency/uptime numbers */
+--border:         rgba(0, 150, 64, 0.22);
+--border-subtle:  rgba(0, 150, 64, 0.12);
+--border-strong:  rgba(0, 150, 64, 0.40);
+
+--text:           #0B140B;
+--text-muted:     #3F4F3F;
+
+--accent:         #2563EB;  /* darkened for ~4.8:1 on white */
+--accent-solid:   #2563EB;
+--accent-fg:      #FFFFFF;
+--focus-ring:     #2563EB;
+
+/* Dots stay vivid in both themes (small non-text graphics, 3:1 threshold); text variants darken
+   for 4.5:1 on a near-white surface — the same pattern CLAUDE.md specifies for green, extended
+   to all four statuses for consistency. */
+--status-up-dot:        #00C853;  --status-up-text:        #00A847;  /* ~? : 1, verify at Checkpoint A */
+--status-down-dot:      #FF6E6E;  --status-down-text:      #C9372C;
+--status-degraded-dot:  #FFC24B;  --status-degraded-text:  #946800;
+--status-paused-dot:    #9CA3AF;  --status-paused-text:    #5B6472;
+
+--glow:        0 0 0 3px rgba(0, 168, 71, 0.16), 0 2px 10px 0 rgba(11, 20, 11, 0.08); /* tinted ring + soft shadow, not a glow */
+--glass-bg:    rgba(255, 255, 255, 0.65);
+--glass-border: rgba(0, 150, 64, 0.22);
+--glass-blur:  16px;
 ```
 
-### Radii & glass/glow (carried from Observed)
+### Type scale (carried from Observed; `eyebrow` added as a new, distinct small-caps-style token)
 
 ```css
---cronos-radius-sm:   2px;   /* dominant radius observed */
---cronos-radius-md:   4px;
---cronos-radius-pill: 9999px;
+--font-display: "Syne Variable", sans-serif;
+--font-mono:    "DM Mono", monospace;
+--font-body:    "Outfit Variable", sans-serif;
 
---cronos-glow-sm: 0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
+--text-display-1: 72px/72px;   letter-spacing: -1.44px; weight: 700; /* h1 */
+--text-display-2: 48px/48px;   letter-spacing: -0.96px; weight: 700; /* h2 */
+--text-heading-3: 16px/20px;   letter-spacing: -0.32px; weight: 700; /* h3 */
+--text-eyebrow:   13px/16px;   letter-spacing: 0.08em;  weight: 600; /* new — portfolio's "small line above headings" motif, no verbatim source to carry over, paired with an uppercase utility class */
+--text-body:      16px/27.2px; letter-spacing: normal;  weight: 400;
+--text-mono:      16px/27.2px; letter-spacing: -0.4px;  weight: 400; /* latency/uptime numbers, tabular-nums */
 ```
 
-No `backdrop-filter` was observed on the sampled pages. The floating navbar's glass capsule
-(CLAUDE.md, signature component) will need its own blur value — propose `backdrop-filter:
-blur(16px)` as a starting point for Day 5, since nothing was observed to carry over.
-
-### Motion tokens (SRS §9 durations, informed by Observed timing functions)
+### Radii & glass/glow
 
 ```css
---cronos-duration-fast:   150ms;
---cronos-duration-base:   250ms;
---cronos-duration-slow:   400ms;
-
---cronos-ease:   cubic-bezier(0.4, 0, 0.2, 1); /* matches the observed non-default easing */
---cronos-spring: { stiffness: 300, damping: 30 }; /* Motion spring config, tune at Day 5 */
+--radius-sm:   2px;    /* surfaces/cards/inputs — overrides Tailwind's default `rounded-sm` */
+--radius-full: 9999px; /* navbar/pills/orbs — Tailwind's built-in `rounded-full`, unchanged */
 ```
 
-### Status colours (dark theme) — WCAG contrast against `--cronos-bg-primary` (#080A08)
+Glass blur resolved at **16px** (no observed source — `backdrop-filter` wasn't found anywhere in
+the scrape — this was Oryn's choice from 12/16/24px options, with an opaque `--glass-bg` fallback
+for unsupported browsers).
 
-| Status | Colour | Contrast vs bg-primary | Contrast vs bg-card | WCAG AA (4.5:1 text) |
-|---|---|---|---|---|
-| up | `#00C853` (reused accent) | 8.88 : 1 | 7.29 : 1 | Pass |
-| down | `#FF6E6E` | 7.29 : 1 | 5.99 : 1 | Pass |
-| degraded | `#FFC24B` | 12.36 : 1 | 10.15 : 1 | Pass |
-| paused | `#9CA3AF` | 7.82 : 1 | 6.42 : 1 | Pass |
+### Motion tokens
 
-All four clear WCAG AA's 4.5:1 text threshold (and the looser 3:1 UI-component threshold) against
-both background levels used in the system. `up` intentionally reuses the accent colour itself —
-"all is well" should look like the brand, not a separate colour.
+```css
+--duration-fast: 150ms;
+--duration-base: 250ms;
+--duration-slow: 400ms;
 
-### Still open for Oryn
+--ease:   cubic-bezier(0.4, 0, 0.2, 1); /* matches the observed non-default easing */
+--spring: { stiffness: 300, damping: 30 }; /* Motion spring config, visually tuned at Checkpoint A */
+```
 
-1. **Palette match vs. own accent** (SRS §17) — this proposal reuses the portfolio's green
-   verbatim. Say the word if Cronos should take a different accent hue instead.
-2. **Light theme** — proposed only as an unvalidated skeleton above. Confirm whether Day 5 should
-   build it out or whether Cronos stays dark-only like the source site.
-3. **Badge/pill styling** wasn't found on the sampled pages — if there's a specific "Open to
-   Work"-style pill Oryn wants matched, point to the page/state it appears on and today's
-   extraction script can be re-run against it.
-4. **Glass blur value** for the floating navbar has no observed source — `blur(16px)` above is a
-   placeholder, not an extracted value.
+### Status colours — WCAG contrast
+
+| Status | Dark (dot = text) | vs `#080A08` | vs `#1A221A` | Light text | vs `#FFFFFF` |
+|---|---|---|---|---|---|
+| up | `#00C853` | 8.88:1 | 7.29:1 | `#00A847` | ≥4.5:1 (reused from earlier light-theme sketch) |
+| down | `#FF6E6E` | 7.29:1 | 5.99:1 | `#C9372C` | ~5:1 (estimate, confirm visually at Checkpoint A) |
+| degraded | `#FFC24B` | 12.36:1 | 10.15:1 | `#946800` | ~5.5:1 (estimate) |
+| paused | `#9CA3AF` | 7.82:1 | 6.42:1 | `#5B6472` | ~6:1 (estimate) |
+
+Dark-theme numbers are measured (Part 1 extraction + direct computation). The three new
+light-theme text colours (down/degraded/paused) are reasoned estimates following the same
+darkening approach already validated for `up` — Checkpoint A's screenshot review is the point
+where these get a final visual/contrast-tool check before they're used anywhere beyond
+`/dev/design`.
+
+### Resolved (previously "Still open for Oryn")
+
+All four items from the original "Still open" list were resolved via this session's
+AskUserQuestion rounds: accent is a new Electric Blue (not reused green), light theme is fully
+built (not optional), pill styling is outlined-with-dot (no portfolio reference existed), and
+glass blur is 16px (no portfolio reference existed). See the top of this section for the
+rationale on each.
