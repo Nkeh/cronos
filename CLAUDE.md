@@ -128,7 +128,10 @@ cronos/
 - **Heartbeats:** `new` never alerts. Deadline = `greatest(last_ping_at, ingest_recovered_at) +
   period + grace`. The sweep is a conditional `UPDATE ... RETURNING` (safe if run twice).
 - **Outbox:** notification rows are written in the **same transaction** as the incident change.
-  Nothing sends email/webhooks inline from api or runner.
+  Nothing sends email/webhooks inline from api or runner. *(Exception, Day 3: auth emails —
+  verify, already-registered notice, reset — send via a FastAPI `BackgroundTask` after the
+  response, not through the outbox; a lost auth email is recoverable via resend, unlike an
+  incident alert.)*
 - Flapping and alert caps live in Postgres, not Redis.
 - Maintenance jobs run under `pg_try_advisory_lock` (one runner at a time).
 
@@ -144,6 +147,8 @@ cronos/
 - Monitors are GET/HEAD only. No custom headers or bodies in v1.
 - Sessions: random token in httpOnly/Secure/SameSite=Lax cookie; DB stores only its SHA-256.
   CSRF double-submit header on every state-changing route. Passwords: argon2.
+- **When Day 4 adds API keys:** if `Authorization` is present, authenticate only by API key; an
+  invalid key is a 401, never a silent fallback to the session cookie.
 - API keys: shown once, stored hashed, looked up by prefix, scoped, revocable.
 - Webhook secrets encrypted at rest. Signature: `v1=HMAC-SHA256(secret, timestamp + "." + body)`.
 - `/ping/*` always returns 200 (no slug enumeration). Never log slugs, tokens, or raw IPs (hash IPs).

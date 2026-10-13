@@ -9,17 +9,15 @@ services:
       - ./backend:/app
     environment:
       WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+    # Shell form (not the usual exec array) so $FORWARDED_ALLOW_IPS, loaded
+    # from .env via env_file, expands at container start — it's Caddy's
+    # pinned address (see compose.yaml), the only peer trusted to set
+    # X-Forwarded-For.
     command:
       [
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000",
-        "--reload",
-        "--reload-dir",
-        "/app/app",
+        "sh",
+        "-c",
+        "uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\"",
       ]
 
   # migrate/runner/notifier share the same image as api but have no uvicorn

@@ -154,6 +154,8 @@ The inversion is the point of heartbeats: for monitors Cronos acts and expects a
 
 UUID primary keys everywhere except the two high-volume tables (bigint). All timestamps are `timestamptz` and every time comparison uses Postgres `now()`, never the app clock. Integrity lives in the database: polymorphic references are two nullable foreign keys with a CHECK that exactly one is set.
 
+**As built (day 2).** Physical tables use plural snake\_case names (`users`, `monitors`, `check_results`, …); the entity names below are logical. Every status and kind field is text with a CHECK constraint, never a Postgres enum type. Mutable configuration tables carry `updated_at`, maintained by a shared `set_updated_at()` trigger. The database and every connection are pinned to UTC. Cross-account links are impossible to insert: incidents, channel links, notifications and status-page items use composite `(account_id, x_id)` foreign keys. Cascades are database `ON DELETE` rules only; the models use no ORM relationships.
+
 **Accounts and auth**
 
 | Table | Key fields | Notes |
@@ -162,6 +164,7 @@ UUID primary keys everywhere except the two high-volume tables (bigint). All tim
 | user | id, account\_id, email (citext unique), password\_hash, email\_verified\_at | argon2 hashes |
 | session | id = sha256(token), user\_id, expires\_at, last\_seen\_at, user\_agent | Cookie holds the raw token only |
 | api\_key | id, account\_id, prefix, key\_hash, scopes\[\], last\_used\_at, revoked\_at | Shown once; looked up by prefix |
+| auth\_token | id, user\_id, purpose, token\_hash unique, expires\_at, used\_at | Email verification and password reset; purpose is verify\_email or reset\_password; single use |
 
 **Monitor** — an HTTP check.
 
@@ -205,7 +208,7 @@ UUID primary keys everywhere except the two high-volume tables (bigint). All tim
 
 | Table | Fields | Notes |
 | --- | --- | --- |
-| incident | id, account\_id, monitor\_id null, heartbeat\_id null, started\_at, confirmed\_at, resolved\_at, cause, last\_error, acknowledged\_at, acknowledged\_by | CHECK exactly one subject; partial unique index per subject `WHERE resolved_at IS NULL`; `started_at` = first failing check |
+| incident | id, account\_id, monitor\_id null, heartbeat\_id null, started\_at, confirmed\_at, resolved\_at, cause, last\_error, acknowledged\_at, acknowledged\_by | CHECK exactly one subject; partial unique index per subject `WHERE resolved_at IS NULL`; `started_at` = first failing check; `cause` is one of `http_status`, `timeout`, `connection`, `dns`, `tls`, `redirects`, `blocked` (monitors) or `heartbeat_missed`, `heartbeat_fail` (heartbeats), enforced to match the subject |
 | notification\_channel | id, account\_id, kind, config jsonb, secret, verified\_at | email or webhook |
 | monitor\_channel, heartbeat\_channel | subject id, channel\_id | FR-6.4 routing |
 | notification (outbox) | id, account\_id, incident\_id null, channel\_id, event, payload jsonb, status, attempts, next\_attempt\_at, last\_error, created\_at, sent\_at | Index on (status, next\_attempt\_at); events: opened, resolved, fail\_ping, flapping, cap\_reached |
@@ -630,7 +633,7 @@ Fifteen days, one more than revision 1, to give the design system its own day. T
 | 1 | Compose skeleton (caddy, api, runner, notifier, db, redis, mailpit, chaos), app factory, async SQLAlchemy + Alembic, Vite/React/TS, logging, pytest harness, CLAUDE.md; Playwright extraction of portfolio tokens | `docker compose up`; SPA loads through Caddy; `/healthz` green; `tokens.md` ready for review |
 | 2 | Full schema and migrations: all tables, partial unique indexes, CHECK constraints | Constraint tests fail correctly against real Postgres |
 | 3 | Auth: argon2, Postgres sessions, CSRF, signup/verify/login/logout/reset, fail-open auth rate limits | Full flow via Mailpit; Redis down does not break login |
-| 4 | API keys, `PLANS` + `check_limit`, monitor CRUD API with save-time URL checks | 6th free monitor rejected; private URL rejected |
+| 4 | API keys, `PLANS` + `check_limit`, monitor CRUD API with save-time URL checks | 16th monitor rejected (launch plan); private URL rejected |
 | 5 | Design system and app shell: tokens, floating bottom navbar, motion system, route transitions, auth screens, monitor list and form | Playwright screenshots at 3 widths, reduced motion on and off |
 | 6 | Runner: capacity-limited claims, cadence, jitter, check-now, `runner_state` (stub probe) | Two runners, no double checks; `kill -9` recovery |
 | 7 | Probe: guarded network backend, fresh connections, caps, timings, CheckResult; SSRF test suite | Chaos redirect to metadata blocked; hang times out |

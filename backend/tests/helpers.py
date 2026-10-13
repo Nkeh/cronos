@@ -8,15 +8,18 @@ callers can chain straight into the next helper or the row under test.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from argon2 import PasswordHasher
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account
 from app.auth.models import ApiKey, AuthToken, Session, User
+from app.core.clock import Clock
 from app.heartbeats.models import Heartbeat, HeartbeatPing
 from app.incidents.models import Incident
 from app.monitors.models import CheckResult, Monitor
@@ -46,6 +49,39 @@ async def make_user(session: AsyncSession, account_id: uuid.UUID, **overrides: A
     session.add(user)
     await session.flush()
     return user
+
+
+async def make_user_with_password(
+    session: AsyncSession,
+    account_id: uuid.UUID,
+    password: str,
+    hasher: PasswordHasher,
+    **overrides: Any,
+) -> User:
+    """Like make_user, but with a real, verifiable argon2 hash — make_user's
+    default password_hash is just a placeholder string, not a real hash."""
+    defaults: dict[str, Any] = {"password_hash": hasher.hash(password)}
+    defaults.update(overrides)
+    return await make_user(session, account_id, **defaults)
+
+
+async def make_valid_session(
+    session: AsyncSession, user_id: uuid.UUID, clock: Clock, **overrides: Any
+) -> tuple[str, Session]:
+    """Returns (raw_token, row). raw_token is what a test sets as the cookie
+    value; row.id is sha256(raw_token).hexdigest() — matching production
+    exactly (sessions.id IS the hash, there's no separate token column)."""
+    raw_token = secrets.token_urlsafe(32)
+    defaults: dict[str, Any] = {
+        "id": hashlib.sha256(raw_token.encode()).hexdigest(),
+        "user_id": user_id,
+        "expires_at": clock.now() + timedelta(days=30),
+    }
+    defaults.update(overrides)
+    row = Session(**defaults)
+    session.add(row)
+    await session.flush()
+    return raw_token, row
 
 
 async def make_session(session: AsyncSession, user_id: uuid.UUID, **overrides: Any) -> Session:

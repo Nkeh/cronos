@@ -18,8 +18,29 @@ _CODE_BY_STATUS: dict[int, str] = {
     status.HTTP_403_FORBIDDEN: "forbidden",
     status.HTTP_404_NOT_FOUND: "not_found",
     status.HTTP_409_CONFLICT: "conflict",
+    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: "unsupported_media_type",
     status.HTTP_429_TOO_MANY_REQUESTS: "rate_limited",
 }
+
+
+class ApiError(HTTPException):
+    """Like HTTPException, but carries a specific `code` (and optional `field`)
+    instead of the generic one-code-per-status mapping below — e.g. login's
+    401 must be "invalid_credentials", not the generic "unauthorized".
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        field: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=message, headers=headers)
+        self.code = code
+        self.field = field
 
 
 def _error_response(
@@ -32,6 +53,16 @@ def _error_response(
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ApiError)
+    async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        # ApiError IS-A HTTPException; Starlette resolves handlers by walking
+        # type(exc).__mro__ and taking the first registered match, so ApiError
+        # instances always land here, never in the generic handler below.
+        response = _error_response(exc.status_code, exc.code, exc.detail, field=exc.field)
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
+
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
         code = _CODE_BY_STATUS.get(exc.status_code, "error")

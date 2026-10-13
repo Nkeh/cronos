@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 
 import structlog
+from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -23,6 +25,25 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """Per-request session dependency.
+
+    Rolls back on any exception and always closes, but does NOT auto-commit
+    on a clean return — that would make the transaction boundary an inferred
+    side effect of FastAPI's dependency-teardown timing relative to
+    BackgroundTasks, rather than a fact visible in each route's own code.
+    Routes that write call `await session.commit()` themselves, explicitly,
+    before scheduling any BackgroundTask and before returning.
+    """
+    session_factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with session_factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def wait_for_database(dsn: str, *, retries: int = 30, delay_seconds: float = 1.0) -> None:

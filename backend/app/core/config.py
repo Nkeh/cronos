@@ -9,9 +9,14 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
+from argon2 import PasswordHasher as _DefaultPasswordHasher
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EXAMPLE_SECRET_KEY = "change-me-dev-only-not-for-production"
+
+# Reading argon2-cffi's own constructor defaults means "production uses
+# library defaults" is literally true with zero production-side config.
+_ARGON2_DEFAULTS = _DefaultPasswordHasher()
 
 
 class ConfigurationError(RuntimeError):
@@ -33,6 +38,7 @@ class Settings(BaseSettings):
     database_url_test: str | None = None
 
     redis_url: str = "redis://redis:6379/0"
+    redis_url_test: str | None = None
 
     email_host: str = "mailpit"
     email_port: int = 1025
@@ -49,6 +55,47 @@ class Settings(BaseSettings):
     ssrf_allow_hosts: str | None = None
     watch_polling: bool = True
 
+    # ---- Auth (Day 3) ----
+    cookie_secure: bool = True
+
+    # Dev/test override these to cheap values via .env; production never sets
+    # them, so these fall back to argon2-cffi's own real defaults.
+    argon2_time_cost: int = _ARGON2_DEFAULTS.time_cost
+    argon2_memory_cost: int = _ARGON2_DEFAULTS.memory_cost
+    argon2_parallelism: int = _ARGON2_DEFAULTS.parallelism
+    argon2_hash_len: int = _ARGON2_DEFAULTS.hash_len
+    argon2_salt_len: int = _ARGON2_DEFAULTS.salt_len
+
+    session_absolute_ttl_days: int = 30
+    session_idle_ttl_days: int = 7
+    session_last_seen_bump_seconds: int = 300
+    verify_token_ttl_hours: int = 24
+    reset_token_ttl_hours: int = 1
+
+    rate_limit_login_ip_max: int = 10
+    rate_limit_login_ip_window_seconds: int = 60
+    rate_limit_login_email_ip_failures_max: int = 5
+    rate_limit_login_email_ip_failures_window_seconds: int = 900
+    rate_limit_login_email_failures_max: int = 30
+    rate_limit_login_email_failures_window_seconds: int = 3600
+    rate_limit_signup_ip_max: int = 5
+    rate_limit_signup_ip_window_seconds: int = 3600
+    rate_limit_reset_request_email_max: int = 3
+    rate_limit_reset_request_email_window_seconds: int = 3600
+    rate_limit_reset_request_ip_max: int = 10
+    rate_limit_reset_request_ip_window_seconds: int = 3600
+    rate_limit_verify_resend_user_max: int = 3
+    rate_limit_verify_resend_user_window_seconds: int = 3600
+
+    # Comma-separated IPs of proxies we trust to set X-Forwarded-For (i.e. Caddy).
+    trusted_proxy_ips: str = "127.0.0.1"
+
+    @property
+    def trusted_proxy_ips_set(self) -> frozenset[str]:
+        return frozenset(
+            ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip()
+        )
+
     def check_production_guard(self) -> None:
         if self.env != "production":
             return
@@ -62,6 +109,10 @@ class Settings(BaseSettings):
             reasons.append("SECRET_KEY is missing or still the example placeholder value")
         if self.debug:
             reasons.append("DEBUG is enabled")
+        if not self.cookie_secure:
+            reasons.append(
+                "COOKIE_SECURE is false; session/CSRF cookies would be sent over plain HTTP"
+            )
 
         if reasons:
             bullets = "\n".join(f"  - {reason}" for reason in reasons)

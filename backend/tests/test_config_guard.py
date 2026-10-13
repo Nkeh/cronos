@@ -13,6 +13,7 @@ def _production_settings(**overrides: object) -> Settings:
         "encryption_key": "a-real-encryption-key-value",
         "ssrf_allow_hosts": None,
         "debug": False,
+        "cookie_secure": True,
     }
     base.update(overrides)
     return Settings(**base)
@@ -33,6 +34,12 @@ def test_refuses_when_secret_key_is_the_example_value() -> None:
 def test_refuses_when_debug_is_enabled() -> None:
     settings = _production_settings(debug=True)
     with pytest.raises(ConfigurationError, match="DEBUG"):
+        settings.check_production_guard()
+
+
+def test_refuses_when_cookie_secure_is_false() -> None:
+    settings = _production_settings(cookie_secure=False)
+    with pytest.raises(ConfigurationError, match="COOKIE_SECURE"):
         settings.check_production_guard()
 
 
