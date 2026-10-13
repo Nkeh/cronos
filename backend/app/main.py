@@ -7,6 +7,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.accounts.router import router as accounts_router
+from app.auth.api_keys_router import router as api_keys_router
 from app.auth.router import router as auth_router
 from app.auth.security import build_dummy_hash, build_password_hasher
 from app.core.clock import Clock, SystemClock
@@ -16,7 +18,9 @@ from app.core.db import create_engine, create_session_factory
 from app.core.email import EmailSender, SMTPEmailSender
 from app.core.errors import register_error_handlers
 from app.core.logging import RequestIDMiddleware, configure_logging
+from app.core.openapi import custom_openapi
 from app.core.redis import FailOpenRedis
+from app.monitors.router import router as monitors_router
 
 logger = structlog.get_logger()
 
@@ -64,6 +68,10 @@ def create_app(
     app.add_middleware(CSRFMiddleware, settings=settings)
     register_error_handlers(app)
     app.include_router(auth_router)
+    app.include_router(api_keys_router)
+    app.include_router(accounts_router)
+    app.include_router(monitors_router)
+    app.openapi = lambda: custom_openapi(app)  # documents both cookie and bearer auth
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

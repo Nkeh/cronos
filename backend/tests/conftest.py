@@ -114,6 +114,19 @@ def frozen_clock() -> FrozenClock:
     return FrozenClock(at=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
 
+@pytest_asyncio.fixture
+async def csrf_headers(client: AsyncClient) -> dict[str, str]:
+    """Fetches the CSRF cookie via GET /csrf and returns the matching header
+    every mutating test needs — CSRFMiddleware requires both. Hoisted here
+    (was tests/auth/conftest.py only) once tests/api_keys/ and
+    tests/monitors/ needed it too."""
+    response = await client.get("/api/v1/auth/csrf")
+    assert response.status_code == 200
+    token = client.cookies.get("cronos_csrf")
+    assert token
+    return {"X-CSRF-Token": token}
+
+
 @pytest.fixture(scope="session")
 def db_engine() -> AsyncEngine:
     """The same UTC-pinned engine construction the app itself uses.

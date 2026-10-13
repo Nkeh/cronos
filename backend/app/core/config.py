@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     rate_limit_verify_resend_user_max: int = 3
     rate_limit_verify_resend_user_window_seconds: int = 3600
 
+    # ---- API keys (Day 4) ----
+    # Abuse protection, not a plan-size limit, so it lives here rather than in
+    # PLANS. Enforced inside authenticate() itself (see app/auth/api_keys.py),
+    # not per-router, so it covers every route an API key can reach.
+    rate_limit_api_key_max: int = 600
+    rate_limit_api_key_window_seconds: int = 60
+
     # Comma-separated IPs of proxies we trust to set X-Forwarded-For (i.e. Caddy).
     trusted_proxy_ips: str = "127.0.0.1"
 
@@ -94,6 +101,14 @@ class Settings(BaseSettings):
     def trusted_proxy_ips_set(self) -> frozenset[str]:
         return frozenset(
             ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip()
+        )
+
+    @property
+    def ssrf_allow_hosts_set(self) -> frozenset[str]:
+        if not self.ssrf_allow_hosts:
+            return frozenset()
+        return frozenset(
+            host.strip().lower() for host in self.ssrf_allow_hosts.split(",") if host.strip()
         )
 
     def check_production_guard(self) -> None:

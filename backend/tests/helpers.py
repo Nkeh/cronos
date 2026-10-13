@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from argon2 import PasswordHasher
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account
@@ -100,6 +101,7 @@ async def make_session(session: AsyncSession, user_id: uuid.UUID, **overrides: A
 async def make_api_key(session: AsyncSession, account_id: uuid.UUID, **overrides: Any) -> ApiKey:
     defaults: dict[str, Any] = {
         "account_id": account_id,
+        "name": f"key-{uuid.uuid4().hex[:8]}",
         "prefix": f"ck_{uuid.uuid4().hex[:12]}",
         "key_hash": uuid.uuid4().hex,
     }
@@ -108,6 +110,31 @@ async def make_api_key(session: AsyncSession, account_id: uuid.UUID, **overrides
     session.add(row)
     await session.flush()
     return row
+
+
+async def login_as(
+    client: AsyncClient,
+    session: AsyncSession,
+    clock: Clock,
+    *,
+    verified: bool = True,
+    **user_overrides: Any,
+) -> User:
+    """Creates an account+user+session and sets the session cookie directly
+    on `client`, for route tests that need an authenticated principal
+    without going through the real login flow. Not a DB-row builder like
+    the rest of this module, but needed by enough new test packages
+    (api_keys, monitors, accounts) to warrant centralizing."""
+    account = await make_account(session)
+    defaults: dict[str, Any] = {}
+    if verified:
+        defaults["email_verified_at"] = clock.now()
+    defaults.update(user_overrides)
+    user = await make_user(session, account.id, **defaults)
+    raw_token, _ = await make_valid_session(session, user.id, clock)
+    await session.commit()
+    client.cookies.set("cronos_session", raw_token)
+    return user
 
 
 async def make_auth_token(session: AsyncSession, user_id: uuid.UUID, **overrides: Any) -> AuthToken:

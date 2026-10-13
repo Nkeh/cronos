@@ -48,8 +48,17 @@ class Session(Base):
 
 
 class ApiKey(Base):
+    """name and created_by_user_id are NEW — not in SRS Section 5. Added Day 4.
+
+    created_by_user_id is nullable (ON DELETE SET NULL): if the creating user
+    is deleted, the key survives as an orphan but authenticate() refuses to
+    resolve a principal through it (see app/auth/api_keys.py) — a key must
+    always map to a live user, never fall back to "the account's user".
+    """
+
     __tablename__ = "api_keys"
     __table_args__ = (
+        CheckConstraint("length(name) BETWEEN 1 AND 60", name="name_length"),
         Index("ix_api_keys_account_id", "account_id"),
     )
 
@@ -59,6 +68,7 @@ class ApiKey(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
     prefix: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     key_hash: Mapped[str] = mapped_column(Text, nullable=False)
     scopes: Mapped[list[str]] = mapped_column(
@@ -66,6 +76,9 @@ class ApiKey(Base):
     )
     last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
 
 
