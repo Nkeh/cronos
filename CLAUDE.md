@@ -237,6 +237,8 @@ motion. It draws on Oryn's portfolio (https://www.bonyaransom.me/). See SRS §9.
   mixed public/private records, webhook to private address.
 - Use the `chaos` service (SRS §15) for live acceptance. Use Mailpit for email evidence.
 - Report the test count before → after every day.
+- Every potentially blocking command runs under a wall-clock `timeout`, and every poll loop has
+  a deadline (Day 5b: a silent Playwright hang cost two sessions over an hour, once 13 hours).
 
 ## Common commands
 

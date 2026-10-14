@@ -32,14 +32,22 @@
   --accent-fg: #ffffff;
   --focus-ring: #2563eb;
 
+  /* up/degraded corrected Day 5b — the original #00a847/#946800 measured
+     ~2.8-4.4:1 against surface/surface-raised, below AA's 4.5:1 normal-text
+     floor; these clear 4.5:1 against bg/surface/surface-raised (see
+     tokens.md's contrast table). */
   --status-up-dot: #00c853;
-  --status-up-text: #00a847;
+  --status-up-text: #007a36;
   --status-down-dot: #ff6e6e;
   --status-down-text: #c9372c;
   --status-degraded-dot: #ffc24b;
-  --status-degraded-text: #946800;
+  --status-degraded-text: #8c6200;
   --status-paused-dot: #9ca3af;
   --status-paused-text: #5b6472;
+  /* "new" (never checked yet) — a dedicated blue-grey, distinct from
+     paused's neutral grey, not a reuse of the interactive accent. */
+  --status-new-dot: #8296be;
+  --status-new-text: #44588a;
 
   /* Light theme trades the dark glow for a tinted ring + soft shadow, per CLAUDE.md. */
   --glow: 0 0 0 3px rgba(0, 168, 71, 0.16), 0 2px 10px 0 rgba(11, 20, 11, 0.08);
@@ -84,6 +92,8 @@
     --status-degraded-text: #ffc24b;
     --status-paused-dot: #9ca3af;
     --status-paused-text: #9ca3af;
+    --status-new-dot: #8296be;
+    --status-new-text: #8296be;
 
     --glow: 0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
     --glass-bg: rgba(17, 22, 17, 0.6);
@@ -156,6 +166,8 @@
   --color-status-degraded-text: var(--status-degraded-text);
   --color-status-paused-dot: var(--status-paused-dot);
   --color-status-paused-text: var(--status-paused-text);
+  --color-status-new-dot: var(--status-new-dot);
+  --color-status-new-text: var(--status-new-text);
 
   --color-glass-bg: var(--glass-bg);
   --color-glass-border: var(--glass-border);

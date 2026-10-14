@@ -71,6 +71,12 @@ def create_app(
     app.include_router(api_keys_router)
     app.include_router(accounts_router)
     app.include_router(monitors_router)
+    if settings.env != "production":
+        # Dev-only fixture endpoints for Playwright (no Docker access from the
+        # pw-tests container) — never imported, let alone mounted, in prod.
+        from app.dev.router import router as dev_router
+
+        app.include_router(dev_router)
     app.openapi = lambda: custom_openapi(app)  # documents both cookie and bearer auth
 
     @app.get("/healthz")

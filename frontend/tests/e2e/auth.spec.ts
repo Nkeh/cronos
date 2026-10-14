@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { extractLink, waitForEmail } from './helpers/mailpit'
-import { signupVerifyLogin, TEST_PASSWORD, uniqueEmail } from './helpers/auth'
+import { gotoRetrying, signupVerifyLogin, TEST_PASSWORD, uniqueEmail } from './helpers/auth'
 import { SHARED_EMAIL } from './helpers/shared-user'
 
 test('signup -> verify -> login -> navbar -> logout', async ({ page }) => {
@@ -20,20 +20,20 @@ test('signup -> verify -> login -> navbar -> logout', async ({ page }) => {
   await expect(page).toHaveURL('/login')
 
   // the guarded route redirects back to login once the session is gone
-  await page.goto('/monitors')
+  await gotoRetrying(page, '/monitors')
   await expect(page).toHaveURL(/\/login\?next=/)
 })
 
 test('an unverified account sees the resend banner', async ({ page }) => {
   const email = uniqueEmail('pw-unverified')
-  await page.goto('/signup')
+  await gotoRetrying(page, '/signup')
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(TEST_PASSWORD)
   await page.getByRole('button', { name: 'Create account' }).click()
   await waitForEmail(email, 'Verify your Cronos account')
 
   // Log in without clicking the verify link first.
-  await page.goto('/login')
+  await gotoRetrying(page, '/login')
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(TEST_PASSWORD)
   await page.getByRole('button', { name: 'Log in' }).click()
@@ -45,7 +45,7 @@ test('an unverified account sees the resend banner', async ({ page }) => {
 test('invalid credentials show a form-level error', async ({ page }) => {
   // Reuses the shared account (no fresh signup) — signup is rate-limited to 5/hour per IP, and
   // every request from this container shares one IP via network_mode: service:caddy.
-  await page.goto('/login')
+  await gotoRetrying(page, '/login')
   await page.getByLabel('Email').fill(SHARED_EMAIL)
   await page.getByLabel('Password').fill('totally-wrong')
   await page.getByRole('button', { name: 'Log in' }).click()
@@ -58,7 +58,7 @@ test('forgot -> reset -> login with the new password', async ({ page }) => {
   await page.getByRole('button', { name: 'Account menu' }).click()
   await page.getByRole('menuitem', { name: 'Log out' }).click()
 
-  await page.goto('/forgot')
+  await gotoRetrying(page, '/forgot')
   await page.getByLabel('Email').fill(email)
   await page.getByRole('button', { name: 'Send reset link' }).click()
   await expect(page.getByText(/reset link has been sent/i)).toBeVisible()
@@ -67,7 +67,7 @@ test('forgot -> reset -> login with the new password', async ({ page }) => {
   const resetUrl = new URL(extractLink(message.Snippet))
   const newPassword = 'AnotherStrongPass9'
 
-  await page.goto(resetUrl.pathname + resetUrl.search)
+  await gotoRetrying(page, resetUrl.pathname + resetUrl.search)
   await page.getByLabel('New password').fill(newPassword)
   await page.getByRole('button', { name: 'Reset password' }).click()
   await expect(page).toHaveURL('/login')

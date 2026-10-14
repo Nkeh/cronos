@@ -1,8 +1,17 @@
 import { cn } from '../../lib/cn'
 
-export type Status = 'up' | 'down' | 'degraded' | 'paused'
+export type Status = 'new' | 'up' | 'down' | 'degraded' | 'paused'
+
+export const statusLabels: Record<Status, string> = {
+  new: 'New',
+  up: 'Up',
+  down: 'Down',
+  degraded: 'Degraded',
+  paused: 'Paused',
+}
 
 const statusClasses: Record<Status, string> = {
+  new: 'border-status-new-text text-status-new-text',
   up: 'border-status-up-text text-status-up-text',
   down: 'border-status-down-text text-status-down-text',
   degraded: 'border-status-degraded-text text-status-degraded-text',
@@ -10,6 +19,7 @@ const statusClasses: Record<Status, string> = {
 }
 
 const dotClasses: Record<Status, string> = {
+  new: 'bg-status-new-dot',
   up: 'bg-status-up-dot',
   down: 'bg-status-down-dot',
   degraded: 'bg-status-degraded-dot',

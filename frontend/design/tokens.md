@@ -141,6 +141,7 @@ isn't supported.
 --status-down-dot:      #FF6E6E;  --status-down-text:      #FF6E6E;
 --status-degraded-dot:  #FFC24B;  --status-degraded-text:  #FFC24B;
 --status-paused-dot:    #9CA3AF;  --status-paused-text:    #9CA3AF;
+--status-new-dot:       #8296BE;  --status-new-text:       #8296BE;  /* new, Day 5b — see below */
 
 --glow:        0 0 30px 0 rgba(0, 200, 83, 0.25), 0 0 60px 0 rgba(0, 200, 83, 0.08);
 --glass-bg:    rgba(17, 22, 17, 0.6);
@@ -169,11 +170,13 @@ isn't supported.
 
 /* Dots stay vivid in both themes (small non-text graphics, 3:1 threshold); text variants darken
    for 4.5:1 on a near-white surface — the same pattern CLAUDE.md specifies for green, extended
-   to all four statuses for consistency. */
---status-up-dot:        #00C853;  --status-up-text:        #00A847;  /* ~? : 1, verify at Checkpoint A */
+   to all five statuses for consistency. up-text/degraded-text were corrected Day 5b — see the
+   contrast table below; down-text/paused-text were already independently verified passing. */
+--status-up-dot:        #00C853;  --status-up-text:        #007A36;
 --status-down-dot:      #FF6E6E;  --status-down-text:      #C9372C;
---status-degraded-dot:  #FFC24B;  --status-degraded-text:  #946800;
+--status-degraded-dot:  #FFC24B;  --status-degraded-text:  #8C6200;
 --status-paused-dot:    #9CA3AF;  --status-paused-text:    #5B6472;
+--status-new-dot:       #8296BE;  --status-new-text:       #44588A;  /* new, Day 5b */
 
 --glow:        0 0 0 3px rgba(0, 168, 71, 0.16), 0 2px 10px 0 rgba(11, 20, 11, 0.08); /* tinted ring + soft shadow, not a glow */
 --glass-bg:    rgba(255, 255, 255, 0.65);
@@ -218,25 +221,60 @@ for unsupported browsers).
 --spring: { stiffness: 300, damping: 30 }; /* Motion spring config, visually tuned at Checkpoint A */
 ```
 
-### Status colours — WCAG contrast
+### Status colours — WCAG contrast (verified Day 5b)
 
-| Status | Dark (dot = text) | vs `#080A08` | vs `#1A221A` | Light text | vs `#FFFFFF` |
-|---|---|---|---|---|---|
-| up | `#00C853` | 8.88:1 | 7.29:1 | `#00A847` | ≥4.5:1 (reused from earlier light-theme sketch) |
-| down | `#FF6E6E` | 7.29:1 | 5.99:1 | `#C9372C` | ~5:1 (estimate, confirm visually at Checkpoint A) |
-| degraded | `#FFC24B` | 12.36:1 | 10.15:1 | `#946800` | ~5.5:1 (estimate) |
-| paused | `#9CA3AF` | 7.82:1 | 6.42:1 | `#5B6472` | ~6:1 (estimate) |
+Every pair below is computed via the standard WCAG relative-luminance formula against all three
+surfaces each theme actually uses (`bg`/`surface`/`surface-raised`), not just one — the original
+table only checked two dark-theme surfaces and a single light-theme estimate per color, which is
+how `up`/`degraded`'s light-theme failures went unnoticed (see below).
 
-Dark-theme numbers are measured (Part 1 extraction + direct computation). The three new
-light-theme text colours (down/degraded/paused) are reasoned estimates following the same
-darkening approach already validated for `up` — Checkpoint A's screenshot review is the point
-where these get a final visual/contrast-tool check before they're used anywhere beyond
-`/dev/design`.
+**Dark theme** (`text`/`text-muted` against `bg #080A08` / `surface #111611` / `surface-raised
+#1A221A`; status dot=text):
+
+| Token | vs `bg` | vs `surface` | vs `surface-raised` |
+|---|---|---|---|
+| `text` `#F0F5F0` | 18.00:1 | 16.59:1 | 14.77:1 |
+| `text-muted` `#8A9E8A` | 6.94:1 | 6.40:1 | 5.70:1 |
+| `status-up-text` `#00C853` | 8.88:1 | 8.18:1 | 7.29:1 |
+| `status-down-text` `#FF6E6E` | 7.29:1 | 6.72:1 | 5.99:1 |
+| `status-degraded-text` `#FFC24B` | 12.36:1 | 11.39:1 | 10.15:1 |
+| `status-paused-text` `#9CA3AF` | 7.82:1 | 7.22:1 | 6.42:1 |
+| `status-new-text` `#8296BE` | 6.67:1 | 6.15:1 | 5.48:1 |
+
+All dark-theme values the original table listed (up/down/degraded/paused vs `bg`/`surface-raised`)
+are independently reconfirmed correct — no dark-theme change needed.
+
+**Light theme** (`text`/`text-muted` against `bg #F7F9F7` / `surface #FFFFFF` / `surface-raised
+#EFF3EF`):
+
+| Token | vs `bg` | vs `surface` | vs `surface-raised` | Status |
+|---|---|---|---|---|
+| `text` `#0B140B` | 17.74:1 | 18.77:1 | 16.74:1 | ✓ unchanged |
+| `text-muted` `#3F4F3F` | 8.26:1 | 8.74:1 | 7.80:1 | ✓ unchanged |
+| `status-up-text` `#007A36` (was `#00A847`) | 5.18:1 | 5.48:1 | 4.88:1 | **fixed** — old value was only ~2.8-3.1:1 against every light surface, failing AA; the "≥4.5:1 (measured)" label in the original table was wrong |
+| `status-down-text` `#C9372C` | 4.88:1 | 5.17:1 | 4.61:1 | ✓ unchanged, confirmed (tightest margin) |
+| `status-degraded-text` `#8C6200` (was `#946800`) | 5.14:1 | 5.44:1 | 4.86:1 | **fixed** — old value was 4.42:1 against `surface-raised`, just under AA |
+| `status-paused-text` `#5B6472` | 5.66:1 | 5.98:1 | 5.34:1 | ✓ unchanged, confirmed |
+| `status-new-text` `#44588A` (new) | 6.60:1 | 6.98:1 | 6.23:1 | new token, Day 5b |
+
+Every pair is now ≥4.5:1 (AA, normal text) in both themes — the worst case is `down-text` vs
+`surface-raised` at 4.61:1. Dots (`status-*-dot`) are deliberately excluded from this table — they
+stay at the original vivid hex in both themes and only need to clear 3:1 as non-text graphical
+objects, which they do; CLAUDE.md requires that pairing with an icon/label anyway, not contrast
+parity with text.
+
+### `new` status (Day 5b)
+
+`Monitor.status` includes `'new'` (never checked yet — true for every monitor until Day 6's
+runner exists) alongside `up`/`down`/`paused`. Given a dedicated token rather than reusing
+`paused`'s neutral grey, so a never-checked monitor is visually distinct from one its owner
+deliberately paused: a cool blue-grey (`#8296BE` dot/dark-text, `#44588A` light-text) — a
+different hue from `paused`'s warm neutral grey, not a reuse of the interactive accent blue.
 
 ### Resolved (previously "Still open for Oryn")
 
-All four items from the original "Still open" list were resolved via this session's
-AskUserQuestion rounds: accent is a new Electric Blue (not reused green), light theme is fully
-built (not optional), pill styling is outlined-with-dot (no portfolio reference existed), and
-glass blur is 16px (no portfolio reference existed). See the top of this section for the
-rationale on each.
+All four items from the original "Still open" list were resolved via Day 5a's AskUserQuestion
+rounds: accent is a new Electric Blue (not reused green), light theme is fully built (not
+optional), pill styling is outlined-with-dot (no portfolio reference existed), and glass blur is
+16px (no portfolio reference existed). See the top of this section for the rationale on each.
+Day 5b resolved the two flagged-as-estimate light-theme status colors above, and added `new`.

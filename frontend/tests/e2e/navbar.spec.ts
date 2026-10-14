@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { AUTH_STATE_PATH } from './helpers/shared-user'
+import { gotoRetrying } from './helpers/auth'
+import { AUTH_STATE_PATH, FIXTURES } from './helpers/shared-user'
 
 test.use({ storageState: AUTH_STATE_PATH })
 
@@ -8,7 +9,7 @@ const widths = [375, 768, 1440]
 for (const width of widths) {
   test(`navbar geometry and aria-current at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
-    await page.goto('/')
+    await gotoRetrying(page, '/')
 
     // The <nav> landmark is a full-width positioning container (it centers its child); the
     // capsule itself is the visually-bounded element the "never edge-to-edge" rule applies to.
@@ -59,15 +60,24 @@ test('active pill moves between routes under reduced motion (MotionConfig reduce
   await expect(page.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current', 'page')
 })
 
-test('last content row is visible above the navbar when scrolled to the bottom', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 768, height: 700 })
-  await page.goto('/monitors')
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+for (const width of widths) {
+  test(`last monitor row is visible above the navbar when scrolled to the bottom at ${width}px`, async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ storageState: FIXTURES.seeded.statePath })
+    const page = await context.newPage()
+    await page.setViewportSize({ width, height: 700 })
+    await gotoRetrying(page, '/monitors')
 
-  const heading = page.getByRole('heading', { name: 'Monitors.' })
-  await expect(heading).toBeInViewport()
-  const nav = page.getByRole('navigation', { name: 'Primary' })
-  await expect(nav).toBeInViewport()
-})
+    const rows = page.getByRole('link', { name: 'Edit monitor' })
+    // Wait for the real rows to replace the loading skeleton before measuring scroll height —
+    // scrolling against the skeleton's (much shorter) layout would land short of the real bottom.
+    await rows.first().waitFor()
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+
+    await expect(rows.last()).toBeInViewport()
+    const nav = page.getByRole('navigation', { name: 'Primary' })
+    await expect(nav).toBeInViewport()
+    await context.close()
+  })
+}

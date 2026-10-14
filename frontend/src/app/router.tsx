@@ -20,6 +20,13 @@ const ResetPage = lazy(() =>
   import('../features/auth/ResetPage').then((m) => ({ default: m.ResetPage })),
 )
 
+const MonitorsListPage = lazy(() =>
+  import('../features/monitors/MonitorsListPage').then((m) => ({ default: m.MonitorsListPage })),
+)
+const MonitorFormPage = lazy(() =>
+  import('../features/monitors/MonitorFormPage').then((m) => ({ default: m.MonitorFormPage })),
+)
+
 // Statically resolved by Vite (`import.meta.env.DEV` is a build-time constant), so the ternary's
 // false branch — including the dynamic import() itself — is dead-code-eliminated in production.
 const DesignPreviewPage = import.meta.env.DEV
@@ -55,18 +62,9 @@ export function AppRouter() {
 
           <Route element={<AppLayout />}>
             <Route path="/" element={<OverviewPage />} />
-            <Route
-              path="/monitors"
-              element={<PlaceholderPage eyebrow="Up or down" title="Monitors." day={5} />}
-            />
-            <Route
-              path="/monitors/new"
-              element={<PlaceholderPage eyebrow="Up or down" title="Monitors." day={5} />}
-            />
-            <Route
-              path="/monitors/:id/edit"
-              element={<PlaceholderPage eyebrow="Up or down" title="Monitors." day={5} />}
-            />
+            <Route path="/monitors" element={<MonitorsListPage />} />
+            <Route path="/monitors/new" element={<MonitorFormPage />} />
+            <Route path="/monitors/:id/edit" element={<MonitorFormPage />} />
             <Route
               path="/heartbeats"
               element={
