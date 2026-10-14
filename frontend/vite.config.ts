@@ -18,6 +18,21 @@ export default defineConfig({
       host: 'localhost',
       clientPort: 8080,
     },
-    watch: usePolling ? { usePolling: true, interval: 300 } : undefined,
+    // interval bumped 300ms -> 1000ms and heavy/irrelevant trees excluded (docs/progress/
+    // day-05c.md): the default cadence scanning the whole bind-mounted frontend/ tree, including
+    // frontend/tests/screenshots (188 files), sustained ~20-40% idle CPU on this host. A
+    // judgment-call trade of reload latency for CPU headroom, not a value with a specific target.
+    watch: usePolling
+      ? {
+          usePolling: true,
+          interval: 1000,
+          ignored: [
+            '**/node_modules/**',
+            '**/dist/**',
+            '**/tests/screenshots/**',
+            '**/test-results/**',
+          ],
+        }
+      : undefined,
   },
 })

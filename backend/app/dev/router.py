@@ -3,8 +3,8 @@
 Mirrors app.cli exactly — same app.dev_fixtures functions underneath — but
 reachable over HTTP, since the pw-tests container has no Docker access to
 shell into the api container. Only mounted by create_app() when
-settings.env != "production" (see app/main.py): there is no route here at
-all in production, not a guarded 404 inside the handler.
+settings.env == "development" (see app/main.py): there is no route here at
+all in "test" or "production", not a guarded 404 inside the handler.
 """
 
 from __future__ import annotations

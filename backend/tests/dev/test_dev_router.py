@@ -82,25 +82,14 @@ async def test_dev_delete_user_is_idempotent_and_cascades(
     assert recreate.status_code == 201
 
 
-async def test_dev_router_not_mounted_in_production() -> None:
-    settings = Settings(
-        database_url=os.environ["DATABASE_URL"],
-        env="production",
-        secret_key="a-real-production-secret-key-not-the-dev-placeholder",
-        encryption_key="a-real-production-secret-key-not-the-dev-placeholder",
-        cookie_secure=True,
-        debug=False,
-        ssrf_allow_hosts=None,
-    )
+async def _assert_dev_router_absent(settings: Settings) -> None:
     app: FastAPI = create_app(settings=settings, clock=SystemClock(), email_sender=FakeEmailSender())
 
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
             # GET bypasses CSRFMiddleware (state-changing methods only) — fetch a valid token
             # first so the POST below 404s because the route doesn't exist, not because CSRF
-            # failed first. This settings object sets cookie_secure=True (required to pass the
-            # production guard), so httpx's cookie jar won't echo the Secure-flagged cookie back
-            # over this test's plain-http transport — read it straight off Set-Cookie instead.
+            # failed first.
             csrf_resp = await c.get("/api/v1/auth/csrf")
             assert csrf_resp.status_code == 200
             token = re.search(r"cronos_csrf=([^;]+)", csrf_resp.headers["set-cookie"]).group(1)
@@ -111,3 +100,24 @@ async def test_dev_router_not_mounted_in_production() -> None:
                 headers={"X-CSRF-Token": token, "Cookie": f"cronos_csrf={token}"},
             )
             assert resp.status_code == 404
+
+
+async def test_dev_router_not_mounted_in_production() -> None:
+    settings = Settings(
+        database_url=os.environ["DATABASE_URL"],
+        env="production",
+        secret_key="a-real-production-secret-key-not-the-dev-placeholder",
+        encryption_key="a-real-production-secret-key-not-the-dev-placeholder",
+        cookie_secure=True,
+        debug=False,
+        ssrf_allow_hosts=None,
+    )
+    # This settings object sets cookie_secure=True (required to pass the production guard), so
+    # httpx's cookie jar won't echo the Secure-flagged cookie back over this test's plain-http
+    # transport — _assert_dev_router_absent reads it straight off Set-Cookie instead.
+    await _assert_dev_router_absent(settings)
+
+
+async def test_dev_router_not_mounted_under_test_env() -> None:
+    settings = Settings(database_url=os.environ["DATABASE_URL"], env="test")
+    await _assert_dev_router_absent(settings)

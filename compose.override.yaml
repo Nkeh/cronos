@@ -9,6 +9,12 @@ services:
       - ./backend:/app
     environment:
       WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+      # Default 300ms force-polling scan cadence sustained ~70-80% idle CPU on this host
+      # (docs/progress/day-05c.md); 1000ms is a judgment-call trade of reload latency for CPU
+      # headroom, not a value with a specific target. Read directly by watchfiles.watch(), which
+      # uvicorn --reload calls under the hood, so this applies to api the same as to the explicit
+      # watchfiles CLI below.
+      WATCHFILES_POLL_DELAY_MS: "1000"
     # Shell form (not the usual exec array) so $FORWARDED_ALLOW_IPS, loaded
     # from .env via env_file, expands at container start — it's Caddy's
     # pinned address (see compose.yaml), the only peer trusted to set
@@ -35,6 +41,7 @@ services:
       - ./backend:/app
     environment:
       WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+      WATCHFILES_POLL_DELAY_MS: "1000"
     command:
       [
         "watchfiles",
@@ -51,6 +58,7 @@ services:
       - ./backend:/app
     environment:
       WATCHFILES_FORCE_POLLING: ${WATCH_POLLING}
+      WATCHFILES_POLL_DELAY_MS: "1000"
     command:
       [
         "watchfiles",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import ConfigurationError, Settings
 
@@ -51,3 +52,13 @@ def test_allows_a_clean_production_configuration() -> None:
 def test_allows_ssrf_allow_hosts_outside_production() -> None:
     settings = _production_settings(env="development", ssrf_allow_hosts="chaos")
     settings.check_production_guard()
+
+
+def test_rejects_unknown_env_value() -> None:
+    with pytest.raises(ValidationError):
+        _production_settings(env="prod")
+
+
+def test_rejects_wrong_case_env_value() -> None:
+    with pytest.raises(ValidationError):
+        _production_settings(env="Production")
