@@ -7,39 +7,51 @@ test('signup -> verify -> login -> navbar -> logout', async ({ page }) => {
   const email = uniqueEmail('pw-auth')
 
   await signupVerifyLogin(page, email)
-  await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  await test.step('assert overview', async () => {
+    await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  })
 
-  await page.getByRole('link', { name: 'Monitors' }).click()
-  await expect(page).toHaveURL('/monitors')
-  await expect(page.getByRole('heading', { name: 'Monitors.' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Monitors' })).toHaveAttribute('aria-current', 'page')
+  await test.step('navigate to /monitors via navbar', async () => {
+    await page.getByRole('link', { name: 'Monitors' }).click()
+    await expect(page).toHaveURL('/monitors')
+    await expect(page.getByRole('heading', { name: 'Monitors.' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Monitors' })).toHaveAttribute('aria-current', 'page')
+  })
 
-  await page.getByRole('button', { name: 'Account menu' }).click()
-  await page.getByRole('menuitem', { name: 'Log out' }).click()
-  await expect(page).toHaveURL('/login')
+  await test.step('log out', async () => {
+    await page.getByRole('button', { name: 'Account menu' }).click()
+    await page.getByRole('menuitem', { name: 'Log out' }).click()
+    await expect(page).toHaveURL('/login')
+  })
 
   // the guarded route redirects back to login once the session is gone
-  await gotoRetrying(page, '/monitors')
-  await expect(page).toHaveURL(/\/login\?next=/)
+  await test.step('goto /monitors after logout', () => gotoRetrying(page, '/monitors'))
+  await test.step('assert redirected to login', () => expect(page).toHaveURL(/\/login\?next=/))
 })
 
 test('an unverified account sees the resend banner', async ({ page }) => {
   const email = uniqueEmail('pw-unverified')
-  await gotoRetrying(page, '/signup')
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: 'Create account' }).click()
-  await waitForEmail(email, 'Verify your Cronos account')
+  await test.step('goto /signup', () => gotoRetrying(page, '/signup'))
+  await test.step('fill + submit signup form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password').fill(TEST_PASSWORD)
+    await page.getByRole('button', { name: 'Create account' }).click()
+  })
+  await test.step('waitForEmail (verify)', () => waitForEmail(email, 'Verify your Cronos account'))
 
   // Log in without clicking the verify link first.
-  await gotoRetrying(page, '/login')
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: 'Log in' }).click()
-  await page.waitForURL('/')
+  await test.step('goto /login', () => gotoRetrying(page, '/login'))
+  await test.step('fill + submit login form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password').fill(TEST_PASSWORD)
+    await page.getByRole('button', { name: 'Log in' }).click()
+    await page.waitForURL('/')
+  })
 
-  await expect(page.getByText('Verify your email to create monitors and heartbeats.')).toBeVisible()
+  await test.step('assert resend banner visible', () =>
+    expect(page.getByText('Verify your email to create monitors and heartbeats.')).toBeVisible(),
+  )
 })
 
 test('invalid credentials show a form-level error', async ({ page }) => {
@@ -55,25 +67,35 @@ test('invalid credentials show a form-level error', async ({ page }) => {
 test('forgot -> reset -> login with the new password', async ({ page }) => {
   const email = uniqueEmail('pw-reset')
   await signupVerifyLogin(page, email)
-  await page.getByRole('button', { name: 'Account menu' }).click()
-  await page.getByRole('menuitem', { name: 'Log out' }).click()
+  await test.step('log out', async () => {
+    await page.getByRole('button', { name: 'Account menu' }).click()
+    await page.getByRole('menuitem', { name: 'Log out' }).click()
+  })
 
-  await gotoRetrying(page, '/forgot')
-  await page.getByLabel('Email').fill(email)
-  await page.getByRole('button', { name: 'Send reset link' }).click()
-  await expect(page.getByText(/reset link has been sent/i)).toBeVisible()
+  await test.step('goto /forgot', () => gotoRetrying(page, '/forgot'))
+  await test.step('fill + submit forgot form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByRole('button', { name: 'Send reset link' }).click()
+    await expect(page.getByText(/reset link has been sent/i)).toBeVisible()
+  })
 
-  const message = await waitForEmail(email, 'Reset your Cronos password')
+  const message = await test.step('waitForEmail (reset)', () =>
+    waitForEmail(email, 'Reset your Cronos password'),
+  )
   const resetUrl = new URL(extractLink(message.Snippet))
   const newPassword = 'AnotherStrongPass9'
 
-  await gotoRetrying(page, resetUrl.pathname + resetUrl.search)
-  await page.getByLabel('New password').fill(newPassword)
-  await page.getByRole('button', { name: 'Reset password' }).click()
-  await expect(page).toHaveURL('/login')
+  await test.step('goto reset link', () => gotoRetrying(page, resetUrl.pathname + resetUrl.search))
+  await test.step('fill + submit reset form', async () => {
+    await page.getByLabel('New password').fill(newPassword)
+    await page.getByRole('button', { name: 'Reset password' }).click()
+    await expect(page).toHaveURL('/login')
+  })
 
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(newPassword)
-  await page.getByRole('button', { name: 'Log in' }).click()
-  await expect(page).toHaveURL('/')
+  await test.step('fill + submit login form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password').fill(newPassword)
+    await page.getByRole('button', { name: 'Log in' }).click()
+    await expect(page).toHaveURL('/')
+  })
 })

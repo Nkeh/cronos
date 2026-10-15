@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import { test, type Page } from '@playwright/test'
 import { extractLink, waitForEmail } from './mailpit'
 
 export const TEST_PASSWORD = 'CorrectHorseBattery9'
@@ -31,21 +31,31 @@ export async function gotoRetrying(page: Page, url: string, attempts = 2): Promi
  * Only auth.spec.ts's own signup/verify/forgot/reset tests use this — everything else gets its
  * user from the dev-only fixture endpoints (helpers/dev-fixtures.ts) plus loginViaUi below. */
 export async function signupVerifyLogin(page: Page, email: string, password = TEST_PASSWORD) {
-  await gotoRetrying(page, '/signup')
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
-  await page.getByRole('button', { name: 'Create account' }).click()
+  await test.step('goto /signup', () => gotoRetrying(page, '/signup'))
+  await test.step('fill + submit signup form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: 'Create account' }).click()
+  })
 
-  const message = await waitForEmail(email, 'Verify your Cronos account')
+  const message = await test.step('waitForEmail (verify)', () =>
+    waitForEmail(email, 'Verify your Cronos account'),
+  )
   const verifyUrl = new URL(extractLink(message.Snippet))
-  await gotoRetrying(page, verifyUrl.pathname + verifyUrl.search)
-  await page.getByRole('button', { name: 'Verify my email' }).click()
+  await test.step('goto verify link', () =>
+    gotoRetrying(page, verifyUrl.pathname + verifyUrl.search),
+  )
+  await test.step('click verify button', () =>
+    page.getByRole('button', { name: 'Verify my email' }).click(),
+  )
 
-  await gotoRetrying(page, '/login')
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
-  await page.getByRole('button', { name: 'Log in' }).click()
-  await page.waitForURL('/', { timeout: GOTO_TIMEOUT_MS })
+  await test.step('goto /login', () => gotoRetrying(page, '/login'))
+  await test.step('fill + submit login form', async () => {
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password').fill(password)
+    await page.getByRole('button', { name: 'Log in' }).click()
+    await page.waitForURL('/', { timeout: GOTO_TIMEOUT_MS })
+  })
 }
 
 /** Logs in an already-created (dev-fixture) user through the real login form — fast, no

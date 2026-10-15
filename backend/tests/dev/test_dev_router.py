@@ -4,11 +4,12 @@ import os
 import re
 import uuid
 
+import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.core.clock import SystemClock
-from app.core.config import Settings
+from app.core.config import ConfigurationError, Settings
 from app.core.email import FakeEmailSender
 from app.main import create_app
 
@@ -102,7 +103,21 @@ async def _assert_dev_router_absent(settings: Settings) -> None:
             assert resp.status_code == 404
 
 
-async def test_dev_router_not_mounted_in_production() -> None:
+def test_production_refuses_to_start_at_all_today() -> None:
+    """Day 6 adds PROBE_KIND, Literal["stub"] only until Day 7 ships the real HTTP probe --
+    meaning a production Settings object is unconditionally rejected today (stub always
+    reports "up", which must never run in production). That's a strictly stronger guarantee
+    than "the dev router isn't mounted": an app that refuses to start has no routes at all, dev
+    or otherwise. This replaces the old test_dev_router_not_mounted_in_production, which
+    assumed create_app() would succeed for a production Settings object -- no longer true
+    until Day 7 makes "http" the default probe_kind.
+
+    DAY 7 TODO: once PROBE_KIND gains "http" as the default, restore the original
+    test_dev_router_not_mounted_in_production (construct Settings with probe_kind="http" so
+    check_production_guard passes, then assert _assert_dev_router_absent as before) alongside
+    this one -- don't delete this test, PROBE_KIND=stub in production should keep refusing to
+    start forever, Day 7 just makes it reachable again as a *deliberate* misconfiguration
+    instead of the only possible state."""
     settings = Settings(
         database_url=os.environ["DATABASE_URL"],
         env="production",
@@ -112,10 +127,8 @@ async def test_dev_router_not_mounted_in_production() -> None:
         debug=False,
         ssrf_allow_hosts=None,
     )
-    # This settings object sets cookie_secure=True (required to pass the production guard), so
-    # httpx's cookie jar won't echo the Secure-flagged cookie back over this test's plain-http
-    # transport — _assert_dev_router_absent reads it straight off Set-Cookie instead.
-    await _assert_dev_router_absent(settings)
+    with pytest.raises(ConfigurationError, match="PROBE_KIND"):
+        create_app(settings=settings, clock=SystemClock(), email_sender=FakeEmailSender())
 
 
 async def test_dev_router_not_mounted_under_test_env() -> None:

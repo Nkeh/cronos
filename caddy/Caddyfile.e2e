@@ -1,0 +1,20 @@
+{
+	auto_https off
+}
+
+:8080 {
+	encode gzip
+
+	@api path /api/* /ping/* /healthz /readyz
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	# Serves the production build directly, the way Day 14's real Caddy config will — no Vite
+	# dev server in the loop, so e2e runs aren't paying its cold-transform/polling-CPU latency.
+	handle {
+		root * /srv/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

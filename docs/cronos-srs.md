@@ -163,7 +163,7 @@ UUID primary keys everywhere except the two high-volume tables (bigint). All tim
 | account | id, plan, created\_at | Owns plan and limits |
 | user | id, account\_id, email (citext unique), password\_hash, email\_verified\_at | argon2 hashes |
 | session | id = sha256(token), user\_id, expires\_at, last\_seen\_at, user\_agent | Cookie holds the raw token only |
-| api\_key | id, account\_id, prefix, key\_hash, scopes\[\], last\_used\_at, revoked\_at | Shown once; looked up by prefix |
+| api\_key | id, account\_id, name, created\_by\_user\_id, prefix, key\_hash, scopes\[\], last\_used\_at, revoked\_at | Format cronos\_\<prefix>\_\<secret>, shown once; looked up by prefix; scopes are \<resource>:\<read\|write>; a key acts as its creator |
 | auth\_token | id, user\_id, purpose, token\_hash unique, expires\_at, used\_at | Email verification and password reset; purpose is verify\_email or reset\_password; single use |
 
 **Monitor** — an HTTP check.
@@ -305,19 +305,20 @@ The engine's guarantee is narrow and stated honestly: a crash may skip one inter
 
 ```sql
 WITH due AS (
-  SELECT id FROM monitor
+  SELECT id, next_check_at AS scheduled_for
+  FROM monitors
   WHERE is_active AND next_check_at <= now()
   ORDER BY next_check_at
-  FOR UPDATE SKIP LOCKED
   LIMIT :free_slots
+  FOR UPDATE SKIP LOCKED
 )
-UPDATE monitor m SET next_check_at = CASE
+UPDATE monitors m SET next_check_at = CASE
     WHEN m.next_check_at + make_interval(secs => m.interval_seconds) > now()
       THEN m.next_check_at + make_interval(secs => m.interval_seconds)  -- keep cadence
     ELSE now() + make_interval(secs => m.interval_seconds)            -- skip missed slots
   END
 FROM due WHERE m.id = due.id
-RETURNING m.*;
+RETURNING m.id, m.url, m.method, m.expected_status, m.timeout_seconds, due.scheduled_for;
 ```
 
 The advanced `next_check_at` acts as a lease. New and resumed monitors start at `now() + random(0, interval)` so creation bursts spread out. "Check now" sets `next_check_at = now()` and reuses this path. Each tick writes `runner_state` (last tick, in-flight count, oldest due lag).
@@ -501,6 +502,7 @@ v1 launches with one plan, `launch`, for every account: no billing, no tiers, no
 | aggregate\_retention\_days | 90 | 30 | 365 |
 | alert\_emails\_per\_day | 50 | 30 | 500 |
 | webhooks\_per\_day | 500 | 200 | 5,000 |
+| max\_api\_keys | 10 | 10 | 25 |
 
 The two v2 columns are planning notes only and are not built in v1. Launch values are tunable in config.
 

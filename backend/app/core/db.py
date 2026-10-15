@@ -15,12 +15,16 @@ from app.core.config import Settings
 logger = structlog.get_logger()
 
 
-def create_engine(settings: Settings) -> AsyncEngine:
-    return create_async_engine(
-        settings.database_url,
-        pool_pre_ping=True,
-        connect_args={"server_settings": {"timezone": "UTC"}},
-    )
+def create_engine(settings: Settings, **engine_kwargs: object) -> AsyncEngine:
+    """engine_kwargs lets a caller override/extend the defaults below -- e.g. the runner passes
+    its own pool_size/max_overflow/pool_timeout, sized for RUNNER_CONCURRENCY, distinct from the
+    API's pool defaults."""
+    kwargs: dict[str, object] = {
+        "pool_pre_ping": True,
+        "connect_args": {"server_settings": {"timezone": "UTC"}},
+    }
+    kwargs.update(engine_kwargs)
+    return create_async_engine(settings.database_url, **kwargs)
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

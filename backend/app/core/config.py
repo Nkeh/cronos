@@ -97,6 +97,30 @@ class Settings(BaseSettings):
     # Comma-separated IPs of proxies we trust to set X-Forwarded-For (i.e. Caddy).
     trusted_proxy_ips: str = "127.0.0.1"
 
+    # ---- Runner (Day 6) ----
+    runner_concurrency: int = 50
+    runner_drain_seconds: int = 8
+    runner_task_margin_seconds: int = 10
+    runner_claim_lock_timeout_ms: int = 2000
+    runner_claim_statement_timeout_ms: int = 5000
+    # NOT sized to runner_concurrency -- a task holds a connection only for its brief result
+    # write, never while the probe itself is in flight (see _run_one), so concurrent tasks don't
+    # need one connection apiece. Sized instead for how many of those short writes land at once;
+    # a pool-checkout timeout is just a lost slot (see runner.py's PoolTimeoutError handling).
+    runner_pool_size: int = 10
+    runner_max_overflow: int = 5
+    runner_pool_timeout_seconds: int = 5
+
+    stub_probe_delay_min_ms: int = 50
+    stub_probe_delay_max_ms: int = 300
+    stub_probe_outcome: Literal["up", "down"] = "up"
+
+    # Day 7 widens this to Literal["stub", "http"] and defaults it to "http". Until then the
+    # production guard below refuses to start at all with PROBE_KIND=stub, which is every value
+    # this literal currently allows -- deliberate: a stub probe that always reports "up" must
+    # never run where it could be mistaken for real monitoring.
+    probe_kind: Literal["stub"] = "stub"
+
     @property
     def trusted_proxy_ips_set(self) -> frozenset[str]:
         return frozenset(
@@ -127,6 +151,11 @@ class Settings(BaseSettings):
         if not self.cookie_secure:
             reasons.append(
                 "COOKIE_SECURE is false; session/CSRF cookies would be sent over plain HTTP"
+            )
+        if self.probe_kind == "stub":
+            reasons.append(
+                "PROBE_KIND is stub; a probe that always reports \"up\" must never run in "
+                "production"
             )
 
         if reasons:

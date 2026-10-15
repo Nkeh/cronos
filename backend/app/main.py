@@ -100,7 +100,17 @@ def create_app(
             # Redis is non-critical: report it, never fail readiness for it.
             checks["redis"] = "unavailable"
 
-        # TODO (Day 6): also fail readiness if no runner has ticked within 30s (runner_state).
+        async with app.state.engine.connect() as conn:
+            runner_fresh = await conn.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM runner_state "
+                    "WHERE last_tick_at > now() - interval '30 seconds')"
+                )
+            )
+        checks["runner"] = "ok" if runner_fresh else "stale"
+        if not runner_fresh:
+            return JSONResponse(status_code=503, content={"status": "degraded", "checks": checks})
+
         # TODO (Day 9): also fail readiness if the outbox's oldest pending row is over 5 minutes old.
 
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})

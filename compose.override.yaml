@@ -1,5 +1,6 @@
 volumes:
   frontend_node_modules:
+  frontend_dist:
 
 services:
   # ---- dev conveniences on top of the prod-shaped services in compose.yaml ----
@@ -136,12 +137,70 @@ services:
   # network_mode shares caddy's network namespace (not its own "default"-network membership) so
   # the browser's Origin is http://localhost:8080, matching PUBLIC_ORIGIN and passing the CSRF
   # Origin check; it also resolves other services (mailpit, etc.) exactly as caddy does.
+  # Stays on the dev server deliberately — the @screenshots suite visits /dev/design, which is
+  # dead-code-eliminated from a production build (see pw-tests-e2e below for the default suite).
   pw-tests:
     image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
     profiles: ["tools"]
     network_mode: "service:caddy"
     depends_on:
       caddy:
+        condition: service_healthy
+    working_dir: /work/frontend
+    volumes:
+      - ./frontend:/work/frontend
+      - frontend_node_modules:/work/frontend/node_modules
+    command: ["npx", "playwright", "test"]
+
+  # One-shot production build, re-run fresh every invocation (a `command:` override on the
+  # already-built dev image with a live bind mount, not a cached `docker build` layer) — feeds
+  # caddy-e2e below. docs/progress/day-06.md: this is what finally made the dev-server
+  # page-load latency (not Mailpit) stop costing the 3 slowest auth e2e tests their 30s budget.
+  frontend-build:
+    build:
+      context: ./frontend
+    image: cronos-frontend:dev
+    profiles: ["tools"]
+    networks: [default]
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_dist:/app/dist
+    command: ["npm", "run", "build"]
+
+  # Serves the production build on :8080, same API proxy rules as the real `caddy` — never
+  # published to the host (no port conflict with it), reached only via pw-tests-e2e's
+  # network_mode below. Day 14's real prod Caddyfile needs this same shape (CLAUDE.md: "Caddy
+  # ... serves the SPA"), so Caddyfile.e2e isn't a one-off test fixture.
+  caddy-e2e:
+    image: caddy:2-alpine@sha256:1a81ac3d1a49b2b385a5bfafb8bd39fb40fa1d717461d825ee0d65df91a6e97b
+    profiles: ["tools"]
+    networks: [default]
+    volumes:
+      - ./caddy/Caddyfile.e2e:/etc/caddy/Caddyfile:ro
+      - frontend_dist:/srv/dist:ro
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  # Default (non-@screenshots) suite against the production build:
+  # `docker compose --profile tools run --rm pw-tests-e2e npx playwright test --grep-invert
+  # "@screenshots"`. Same image/volumes as pw-tests, pointed at caddy-e2e's network namespace
+  # instead of caddy's.
+  pw-tests-e2e:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+    profiles: ["tools"]
+    network_mode: "service:caddy-e2e"
+    depends_on:
+      caddy-e2e:
         condition: service_healthy
     working_dir: /work/frontend
     volumes:

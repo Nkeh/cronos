@@ -116,6 +116,7 @@ class CheckResult(Base):
         UUID(as_uuid=True), ForeignKey("monitors.id", ondelete="CASCADE"), nullable=False
     )
     checked_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
+    scheduled_for: Mapped[datetime | None] = mapped_column(nullable=True)
     region: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'eu-1'"))
     is_up: Mapped[bool] = mapped_column(Boolean, nullable=False)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
