@@ -115,11 +115,16 @@ class Settings(BaseSettings):
     stub_probe_delay_max_ms: int = 300
     stub_probe_outcome: Literal["up", "down"] = "up"
 
-    # Day 7 widens this to Literal["stub", "http"] and defaults it to "http". Until then the
-    # production guard below refuses to start at all with PROBE_KIND=stub, which is every value
-    # this literal currently allows -- deliberate: a stub probe that always reports "up" must
-    # never run where it could be mistaken for real monitoring.
-    probe_kind: Literal["stub"] = "stub"
+    # The production guard below still refuses to start with PROBE_KIND=stub explicitly set --
+    # deliberate: a stub probe that always reports "up" must never run where it could be
+    # mistaken for real monitoring. The default is now "http" so production is safe with zero
+    # config.
+    probe_kind: Literal["stub", "http"] = "http"
+
+    # ---- Probe (Day 7) ----
+    probe_max_redirects: int = 3  # SRS Section 13: monitors get <=3 hops; webhooks (Day 9) get 0.
+    probe_body_cap_bytes: int = 65536  # Read at most this much of a response body, then discard.
+    probe_host_cap_per_minute: int = 60  # Politeness cap: checks/min to one target host, all accounts.
 
     @property
     def trusted_proxy_ips_set(self) -> frozenset[str]:

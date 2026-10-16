@@ -17,6 +17,6 @@ RUN uv sync --locked
 COPY app ./app
 COPY healthcheck_http.py ./
 
-EXPOSE 8000
+EXPOSE 8000 8443
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

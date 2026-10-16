@@ -103,21 +103,31 @@ async def _assert_dev_router_absent(settings: Settings) -> None:
             assert resp.status_code == 404
 
 
-def test_production_refuses_to_start_at_all_today() -> None:
-    """Day 6 adds PROBE_KIND, Literal["stub"] only until Day 7 ships the real HTTP probe --
-    meaning a production Settings object is unconditionally rejected today (stub always
-    reports "up", which must never run in production). That's a strictly stronger guarantee
-    than "the dev router isn't mounted": an app that refuses to start has no routes at all, dev
-    or otherwise. This replaces the old test_dev_router_not_mounted_in_production, which
-    assumed create_app() would succeed for a production Settings object -- no longer true
-    until Day 7 makes "http" the default probe_kind.
+def test_production_refuses_to_start_with_probe_kind_stub() -> None:
+    """Day 6 added PROBE_KIND as Literal["stub"] only, so a production Settings object was
+    unconditionally rejected (stub always reports "up", which must never run in production).
+    Day 7 widens PROBE_KIND to Literal["stub", "http"] and flips the default to "http", so a
+    production app now starts cleanly by default (see test_dev_router_not_mounted_in_production
+    below) -- PROBE_KIND=stub in production is a *deliberate* misconfiguration now, not the only
+    possible state, but it must still refuse to start forever."""
+    settings = Settings(
+        database_url=os.environ["DATABASE_URL"],
+        env="production",
+        secret_key="a-real-production-secret-key-not-the-dev-placeholder",
+        encryption_key="a-real-production-secret-key-not-the-dev-placeholder",
+        cookie_secure=True,
+        debug=False,
+        ssrf_allow_hosts=None,
+        probe_kind="stub",
+    )
+    with pytest.raises(ConfigurationError, match="PROBE_KIND"):
+        create_app(settings=settings, clock=SystemClock(), email_sender=FakeEmailSender())
 
-    DAY 7 TODO: once PROBE_KIND gains "http" as the default, restore the original
-    test_dev_router_not_mounted_in_production (construct Settings with probe_kind="http" so
-    check_production_guard passes, then assert _assert_dev_router_absent as before) alongside
-    this one -- don't delete this test, PROBE_KIND=stub in production should keep refusing to
-    start forever, Day 7 just makes it reachable again as a *deliberate* misconfiguration
-    instead of the only possible state."""
+
+async def test_dev_router_not_mounted_in_production() -> None:
+    """The real, originally-intended test (restored per Day 6's own DAY 7 TODO note): with the
+    now-production-safe default probe_kind ("http"), create_app() succeeds for a production
+    Settings object, and the dev-only router must still be absent from it."""
     settings = Settings(
         database_url=os.environ["DATABASE_URL"],
         env="production",
@@ -127,8 +137,7 @@ def test_production_refuses_to_start_at_all_today() -> None:
         debug=False,
         ssrf_allow_hosts=None,
     )
-    with pytest.raises(ConfigurationError, match="PROBE_KIND"):
-        create_app(settings=settings, clock=SystemClock(), email_sender=FakeEmailSender())
+    await _assert_dev_router_absent(settings)
 
 
 async def test_dev_router_not_mounted_under_test_env() -> None:

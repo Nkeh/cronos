@@ -21,6 +21,7 @@ class ProbeResult:
     response_time_ms: int
     error: str | None
     timings: dict | None = None
+    error_kind: str | None = None
 
 
 class Probe(Protocol):

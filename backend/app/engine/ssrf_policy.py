@@ -62,7 +62,7 @@ def _is_single_label(host: str) -> bool:
     return "." not in host
 
 
-def _unwrap_ipv4_mapped(
+def unwrap_ipv4_mapped(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
 ) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
@@ -70,8 +70,8 @@ def _unwrap_ipv4_mapped(
     return ip
 
 
-def _is_denied_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    ip = _unwrap_ipv4_mapped(ip)
+def is_denied_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    ip = unwrap_ipv4_mapped(ip)
     if not ip.is_global:
         return True
     return any(
@@ -79,7 +79,7 @@ def _is_denied_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-def _parse_ip_literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+def parse_ip_literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
         return ipaddress.ip_address(host)
     except ValueError:
@@ -106,7 +106,7 @@ def normalize_and_validate_url(
     if not host_raw:
         raise UrlPolicyError("url_invalid", "URL has no host.")
 
-    ip_literal = _parse_ip_literal(host_raw)
+    ip_literal = parse_ip_literal(host_raw)
     if ip_literal is not None:
         host = str(ip_literal)
     else:
@@ -121,7 +121,7 @@ def normalize_and_validate_url(
 
     if host not in allow_hosts:
         if ip_literal is not None:
-            if _is_denied_ip(ip_literal):
+            if is_denied_ip(ip_literal):
                 raise UrlPolicyError("url_host_blocked", "This host is not allowed.")
         elif _is_blocked_host_name(host) or _is_single_label(host):
             raise UrlPolicyError("url_host_blocked", "This host is not allowed.")
@@ -137,7 +137,7 @@ def normalize_and_validate_url(
     return ParsedUrl(normalized_url=normalized, host=host, port=port)
 
 
-async def _resolve(host: str) -> list[str]:
+async def resolve(host: str) -> list[str]:
     """Indirection so tests monkeypatch this directly instead of stdlib socket."""
 
     def _getaddrinfo() -> list[str]:
@@ -157,13 +157,13 @@ async def check_dns_resolves_public(
 
     try:
         with anyio.fail_after(DNS_TIMEOUT_SECONDS):
-            addresses = await _resolve(host)
+            addresses = await resolve(host)
     except (socket.gaierror, TimeoutError, OSError):
         return
 
     for address in addresses:
-        ip = _parse_ip_literal(address)
-        if ip is not None and _is_denied_ip(ip):
+        ip = parse_ip_literal(address)
+        if ip is not None and is_denied_ip(ip):
             raise UrlPolicyError(
                 "url_resolves_private", "This URL resolves to a private address."
             )

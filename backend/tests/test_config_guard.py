@@ -45,12 +45,18 @@ def test_refuses_when_cookie_secure_is_false() -> None:
 
 
 def test_refuses_when_probe_kind_is_stub() -> None:
-    # probe_kind defaults to "stub" and (until Day 7 adds "http") has no other value --
-    # so a config clean on every other axis still refuses to start, deliberately: a probe
-    # that always reports "up" must never run where it could be mistaken for real monitoring.
-    settings = _production_settings()
+    # probe_kind defaults to "http" now, but an explicit override to "stub" must still refuse --
+    # deliberate: a probe that always reports "up" must never run where it could be mistaken
+    # for real monitoring.
+    settings = _production_settings(probe_kind="stub")
     with pytest.raises(ConfigurationError, match="PROBE_KIND"):
         settings.check_production_guard()
+
+
+def test_allows_when_probe_kind_is_http() -> None:
+    # The default probe_kind ("http") must pass the production guard with zero overrides.
+    settings = _production_settings()
+    settings.check_production_guard()
 
 
 def test_allows_ssrf_allow_hosts_outside_production() -> None:

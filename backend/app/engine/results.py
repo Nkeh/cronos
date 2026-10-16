@@ -26,9 +26,9 @@ _WRITE_RESULT_SQL = text(
     )
     INSERT INTO check_results
         (monitor_id, checked_at, scheduled_for, is_up, status_code, response_time_ms, timings,
-         error)
+         error, error_kind)
     SELECT :monitor_id, now(), :scheduled_for, :is_up, :status_code, :response_time_ms,
-           CAST(:timings AS jsonb), :error
+           CAST(:timings AS jsonb), :error, :error_kind
     FROM m
     RETURNING id
     """
@@ -50,6 +50,7 @@ async def write_result(
             "response_time_ms": result.response_time_ms,
             "timings": json.dumps(result.timings) if result.timings is not None else None,
             "error": result.error,
+            "error_kind": result.error_kind,
         },
     )
     return db_result.first() is not None

@@ -98,7 +98,7 @@ async def test_dns_resolving_to_private_address_is_rejected(monkeypatch: pytest.
     async def fake_resolve(host: str) -> list[str]:
         return ["127.0.0.1"]
 
-    monkeypatch.setattr(ssrf_policy, "_resolve", fake_resolve)
+    monkeypatch.setattr(ssrf_policy, "resolve", fake_resolve)
 
     with pytest.raises(UrlPolicyError) as exc_info:
         await ssrf_policy.check_dns_resolves_public("evil.example")
@@ -109,7 +109,7 @@ async def test_dns_resolving_to_public_address_is_allowed(monkeypatch: pytest.Mo
     async def fake_resolve(host: str) -> list[str]:
         return ["93.184.216.34"]
 
-    monkeypatch.setattr(ssrf_policy, "_resolve", fake_resolve)
+    monkeypatch.setattr(ssrf_policy, "resolve", fake_resolve)
     await ssrf_policy.check_dns_resolves_public("example.com")  # must not raise
 
 
@@ -117,7 +117,7 @@ async def test_nxdomain_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_resolve(host: str) -> list[str]:
         raise socket.gaierror("not found")
 
-    monkeypatch.setattr(ssrf_policy, "_resolve", fake_resolve)
+    monkeypatch.setattr(ssrf_policy, "resolve", fake_resolve)
     await ssrf_policy.check_dns_resolves_public("nxdomain.example")  # must not raise
 
 
@@ -125,7 +125,7 @@ async def test_dns_timeout_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_resolve(host: str) -> list[str]:
         raise TimeoutError
 
-    monkeypatch.setattr(ssrf_policy, "_resolve", fake_resolve)
+    monkeypatch.setattr(ssrf_policy, "resolve", fake_resolve)
     await ssrf_policy.check_dns_resolves_public("slow.example")  # must not raise
 
 
@@ -133,5 +133,5 @@ async def test_dev_allow_host_skips_dns_entirely(monkeypatch: pytest.MonkeyPatch
     async def fail_if_called(host: str) -> list[str]:
         raise AssertionError("must not call DNS for an allow-listed host")
 
-    monkeypatch.setattr(ssrf_policy, "_resolve", fail_if_called)
+    monkeypatch.setattr(ssrf_policy, "resolve", fail_if_called)
     await ssrf_policy.check_dns_resolves_public("chaos", allow_hosts=frozenset({"chaos"}))

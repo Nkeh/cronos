@@ -97,6 +97,11 @@ class CheckResult(Base):
         CheckConstraint(
             "response_time_ms IS NULL OR response_time_ms >= 0", name="response_time_nonneg"
         ),
+        CheckConstraint(
+            "error_kind IS NULL OR error_kind IN "
+            "('http_status', 'timeout', 'connection', 'dns', 'tls', 'redirects', 'blocked')",
+            name="error_kind_allowed",
+        ),
         Index(
             "ix_check_results_monitor_id_checked_at",
             "monitor_id",
@@ -123,6 +128,7 @@ class CheckResult(Base):
     response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     suppressed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )

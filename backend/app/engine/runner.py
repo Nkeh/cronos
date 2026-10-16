@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import socket
+from urllib.parse import urlsplit
 
 import structlog
 from sqlalchemy.exc import DBAPIError
@@ -15,9 +16,12 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from app.core.config import Settings, get_settings
 from app.core.db import create_engine, create_session_factory, wait_for_database
 from app.core.logging import configure_logging
+from app.core.redis import FailOpenRedis
 from app.core.tick_loop import run_tick_loop
 from app.engine.claim import ClaimedMonitor, claim_due_monitors, oldest_due_lag_seconds
 from app.engine.db_bounds import bounded_transaction
+from app.engine.host_cap import check_host_cap
+from app.engine.http_probe import HttpProbe
 from app.engine.probe import Probe, ProbeResult, StubProbe
 from app.engine.results import write_result
 from app.engine.runner_state import delete_runner_state, upsert_runner_state
@@ -46,10 +50,13 @@ class _RunnerContext:
     """Mutable state shared across ticks and spawned per-monitor tasks. A plain object (not a
     dataclass) because every field below is mutated in place from on_tick/_run_one closures."""
 
-    def __init__(self, *, runner_id: str, settings: Settings, probe: Probe) -> None:
+    def __init__(
+        self, *, runner_id: str, settings: Settings, probe: Probe, redis: FailOpenRedis
+    ) -> None:
         self.runner_id = runner_id
         self.settings = settings
         self.probe = probe
+        self.redis = redis
         self.engine = create_engine(
             settings,
             pool_size=settings.runner_pool_size,
@@ -63,6 +70,19 @@ class _RunnerContext:
 
 
 async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
+    host = urlsplit(claimed.url).hostname or claimed.url
+    within_cap = await check_host_cap(
+        ctx.redis, host, limit_per_minute=ctx.settings.probe_host_cap_per_minute
+    )
+    if not within_cap:
+        logger.info(
+            "host_cap_skipped",
+            monitor_id=str(claimed.id),
+            host=host,
+            limit_per_minute=ctx.settings.probe_host_cap_per_minute,
+        )
+        return
+
     deadline_seconds = claimed.timeout_seconds + ctx.settings.runner_task_margin_seconds
     try:
         async with asyncio.timeout(deadline_seconds):
@@ -147,6 +167,24 @@ async def on_tick(ctx: _RunnerContext) -> None:
         ctx.consecutive_db_failures = 0
 
 
+def _build_default_probe(settings: Settings) -> Probe:
+    """Extracted from run() so PROBE_KIND dispatch is unit-testable without spinning up the
+    tick loop. An explicit `probe=` kwarg to run() always wins over this, regardless of
+    PROBE_KIND."""
+    if settings.probe_kind == "stub":
+        return StubProbe(
+            delay_min_ms=settings.stub_probe_delay_min_ms,
+            delay_max_ms=settings.stub_probe_delay_max_ms,
+            outcome=settings.stub_probe_outcome,
+        )
+    return HttpProbe(
+        user_agent=f"Cronos/1.0 (+{settings.public_origin}/bot)",
+        max_redirects=settings.probe_max_redirects,
+        body_cap_bytes=settings.probe_body_cap_bytes,
+        allow_hosts=settings.ssrf_allow_hosts_set,
+    )
+
+
 async def run(*, settings: Settings | None = None, probe: Probe | None = None) -> None:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -155,12 +193,9 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
     await wait_for_database(settings.database_url)
 
     runner_id = socket.gethostname()
-    resolved_probe = probe or StubProbe(
-        delay_min_ms=settings.stub_probe_delay_min_ms,
-        delay_max_ms=settings.stub_probe_delay_max_ms,
-        outcome=settings.stub_probe_outcome,
-    )
-    ctx = _RunnerContext(runner_id=runner_id, settings=settings, probe=resolved_probe)
+    resolved_probe = probe or _build_default_probe(settings)
+    redis = FailOpenRedis(settings.redis_url)
+    ctx = _RunnerContext(runner_id=runner_id, settings=settings, probe=resolved_probe, redis=redis)
 
     async def _on_tick(_tick: int) -> None:
         await on_tick(ctx)
@@ -190,6 +225,7 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
             logger.warning("runner_state_delete_failed", error=str(exc))
 
         await ctx.engine.dispose()
+        await ctx.redis.close()
 
 
 def main() -> None:

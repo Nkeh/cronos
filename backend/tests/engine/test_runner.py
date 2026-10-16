@@ -8,9 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.core.redis import FailOpenRedis
 from app.engine.claim import ClaimedMonitor, claim_due_monitors
+from app.engine.http_probe import HttpProbe
 from app.engine.probe import ProbeResult, StubProbe
-from app.engine.runner import _RunnerContext, _run_one, _spawn, on_tick
+from app.engine.runner import _build_default_probe, _RunnerContext, _run_one, _spawn, on_tick
 from app.monitors.models import CheckResult, Monitor
 from tests.helpers import make_account, make_monitor
 
@@ -39,7 +41,10 @@ def _make_ctx(**settings_overrides: object) -> _RunnerContext:
     settings = get_settings().model_copy(update=settings_overrides)
     probe = StubProbe(delay_min_ms=10, delay_max_ms=10, outcome="up")
     return _RunnerContext(
-        runner_id=f"test-runner-{uuid.uuid4().hex[:8]}", settings=settings, probe=probe
+        runner_id=f"test-runner-{uuid.uuid4().hex[:8]}",
+        settings=settings,
+        probe=probe,
+        redis=FailOpenRedis(settings.redis_url),
     )
 
 
@@ -161,7 +166,12 @@ async def test_db_outage_on_tick_never_raises_and_increments_failures() -> None:
         update={"database_url": "postgresql+asyncpg://nouser:nopass@127.0.0.1:1/does_not_exist"}
     )
     probe = StubProbe(delay_min_ms=10, delay_max_ms=10, outcome="up")
-    ctx = _RunnerContext(runner_id="test-outage-runner", settings=settings, probe=probe)
+    ctx = _RunnerContext(
+        runner_id="test-outage-runner",
+        settings=settings,
+        probe=probe,
+        redis=FailOpenRedis(settings.redis_url),
+    )
     try:
         await on_tick(ctx)  # must not raise
         assert ctx.consecutive_db_failures >= 1
@@ -217,3 +227,40 @@ async def test_shutdown_drain_finishes_fast_tasks_and_abandons_slow_ones(
         )
     ).first()
     assert slow_row is None
+
+
+def test_build_default_probe_returns_stub_for_stub_kind() -> None:
+    settings = get_settings().model_copy(update={"probe_kind": "stub"})
+    probe = _build_default_probe(settings)
+    assert isinstance(probe, StubProbe)
+
+
+def test_build_default_probe_returns_http_for_http_kind() -> None:
+    settings = get_settings().model_copy(update={"probe_kind": "http"})
+    probe = _build_default_probe(settings)
+    assert isinstance(probe, HttpProbe)
+
+
+async def test_runner_skips_write_on_host_cap_exceeded(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(
+        db_session, account.id, next_check_at=_overdue(), url="https://capped.example/x"
+    )
+    await db_session.commit()
+    claimed = await claim_due_monitors(db_session, free_slots=10)
+    await db_session.commit()
+    assert len(claimed) == 1
+
+    ctx = _make_ctx(probe_host_cap_per_minute=1)
+    ctx.probe = StubProbe(delay_min_ms=10, delay_max_ms=10, outcome="up")
+    try:
+        # Exhaust the cap for this host before the runner ever gets a chance to probe it.
+        await ctx.redis.incr_with_ttl("ratelimit:probe:host:capped.example", window_seconds=60)
+        await _run_one(ctx, claimed[0])
+    finally:
+        await ctx.engine.dispose()
+
+    row = (
+        await db_session.execute(select(CheckResult).where(CheckResult.monitor_id == monitor.id))
+    ).first()
+    assert row is None, "a host over its politeness cap must get no check_results row this cycle"
