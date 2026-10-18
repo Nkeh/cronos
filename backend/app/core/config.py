@@ -45,7 +45,17 @@ class Settings(BaseSettings):
     email_from: str = "alerts@cronos.local"
     email_use_tls: bool = False
 
-    canary_urls: str = ""
+    # Three well-known, deliberately lightweight connectivity-check endpoints, one per major
+    # infra provider, so a single provider's regional blip doesn't read as "Cronos is broken":
+    #   - Google's own captive-portal check (204, near-zero payload, built for frequent polling)
+    #   - Cloudflare's edge trace page (200, plain text, served from every PoP)
+    #   - Apple's captive-portal check (200, plain HTML, also built for frequent polling)
+    # Dev .env overrides this to point at chaos paths instead (see compose.override.yaml).
+    canary_urls: str = (
+        "https://www.google.com/generate_204,"
+        "https://www.cloudflare.com/cdn-cgi/trace,"
+        "http://captive.apple.com/hotspot-detect.html"
+    )
     watchdog_url: str | None = None
     sentry_dsn: str | None = None
 
@@ -126,6 +136,14 @@ class Settings(BaseSettings):
     probe_body_cap_bytes: int = 65536  # Read at most this much of a response body, then discard.
     probe_host_cap_per_minute: int = 60  # Politeness cap: checks/min to one target host, all accounts.
 
+    # ---- Incidents / canaries (Day 8) ----
+    recheck_delay_seconds: int = 30  # First failure -> re-check this soon, before confirming.
+    canary_interval_seconds: int = 30  # Per SRS Section 7.
+
+    @property
+    def canary_urls_list(self) -> tuple[str, ...]:
+        return tuple(u.strip() for u in self.canary_urls.split(",") if u.strip())
+
     @property
     def trusted_proxy_ips_set(self) -> frozenset[str]:
         return frozenset(
@@ -161,6 +179,12 @@ class Settings(BaseSettings):
             reasons.append(
                 "PROBE_KIND is stub; a probe that always reports \"up\" must never run in "
                 "production"
+            )
+        if len(self.canary_urls_list) < 3:
+            reasons.append(
+                f"CANARY_URLS has only {len(self.canary_urls_list)} endpoint(s); production "
+                "needs at least 3 so a single provider's blip can't look like Cronos's own "
+                "failure"
             )
 
         if reasons:

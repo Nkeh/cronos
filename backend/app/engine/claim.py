@@ -7,6 +7,7 @@ that one check's result is never written, never a double-check or a stuck monito
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,7 +36,12 @@ _CLAIM_SQL = text(
         WHERE m.id = due.id
         RETURNING m.id, m.url, m.method, m.expected_status, m.timeout_seconds, due.scheduled_for
     )
-    SELECT * FROM claimed
+    -- clock_timestamp(), not now(): now() is pinned to this transaction's start, which can
+    -- predate the moment this SELECT actually runs (and thus the moment claim_monotonic below
+    -- is read) by however long the UPDATE above took. claimed_at anchors a wall-clock delta
+    -- (see claim_monotonic below and app/engine/state.py's probe_started_at), so it needs the
+    -- instant-of-evaluation clock, not the transaction snapshot.
+    SELECT *, clock_timestamp() AS claimed_at FROM claimed
     """
 )
 
@@ -56,6 +62,13 @@ class ClaimedMonitor:
     expected_status: str
     timeout_seconds: int
     scheduled_for: datetime
+    # Day 8: a DB-authoritative wall-clock reading from this claim batch (claimed_at, via
+    # clock_timestamp() -- NOT now(), which is pinned to transaction start) plus a same-process
+    # monotonic reading taken immediately after (claim_monotonic) -- together they let the
+    # state machine compute an approximate, skew-free probe-start wall-clock time without an
+    # extra SELECT clock_timestamp() round-trip. See app/engine/state.py and docs/progress/day-08.md.
+    claimed_at: datetime
+    claim_monotonic: float
 
 
 async def claim_due_monitors(session: AsyncSession, free_slots: int) -> list[ClaimedMonitor]:
@@ -64,6 +77,8 @@ async def claim_due_monitors(session: AsyncSession, free_slots: int) -> list[Cla
     if free_slots <= 0:
         return []
     result = await session.execute(_CLAIM_SQL, {"free_slots": free_slots})
+    rows = list(result)
+    claim_monotonic = time.monotonic()
     return [
         ClaimedMonitor(
             id=row.id,
@@ -72,8 +87,10 @@ async def claim_due_monitors(session: AsyncSession, free_slots: int) -> list[Cla
             expected_status=row.expected_status,
             timeout_seconds=row.timeout_seconds,
             scheduled_for=row.scheduled_for,
+            claimed_at=row.claimed_at,
+            claim_monotonic=claim_monotonic,
         )
-        for row in result
+        for row in rows
     ]
 
 

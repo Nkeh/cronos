@@ -77,6 +77,16 @@ class Monitor(Base):
     status_changed_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=text("now()")
     )
+    # Set to the probe's own start time when consecutive_failures goes 0 -> 1 (Day 8), cleared
+    # on success -- names the moment the target actually started failing, not write time.
+    failing_since: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The probe start time of the last check_result actually applied to the state machine (Day
+    # 8's stale-result watermark). Bumped by the state machine on every fresh apply, and by
+    # patch_monitor's target-change reset (to now(), since a target change can race an in-flight
+    # probe against the OLD target).
+    last_state_at: Mapped[datetime] = mapped_column(
+        nullable=False, server_default=text("now()")
+    )
     ewma_mean: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
     ewma_var: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
     ewma_n: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))

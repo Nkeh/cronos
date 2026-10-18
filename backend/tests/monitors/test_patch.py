@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.incidents.models import Incident
 from app.monitors.models import Monitor
-from tests.helpers import login_as
+from app.notifications.models import Notification
+from tests.helpers import login_as, make_incident
 
 _PAYLOAD = {"name": "api", "url": "http://chaos:8000/health"}
 
@@ -98,3 +102,42 @@ async def test_pause_then_target_change_then_resume_clears_failures_and_ewma(
     await db_session.refresh(row)
     assert row.consecutive_failures == 0
     assert row.ewma_mean is None
+
+
+async def test_target_change_with_open_incident_resolves_edited_silently(
+    client: AsyncClient, csrf_headers: dict, db_session: AsyncSession, app: FastAPI
+) -> None:
+    user = await login_as(client, db_session, app.state.clock)
+    monitor_body = await _create(client, csrf_headers)
+    monitor_id = monitor_body["id"]
+
+    before_edit = datetime.now(timezone.utc)
+    incident = await make_incident(db_session, user.account_id, monitor_id=monitor_id)
+    await db_session.commit()
+
+    patch_resp = await client.patch(
+        f"/api/v1/monitors/{monitor_id}",
+        json={"url": "http://chaos:8003/changed"},
+        headers=csrf_headers,
+    )
+    assert patch_resp.status_code == 200
+
+    # A plain select, not expire_all()+get(): .get()'s expired-primary-key reload path can
+    # collide with pool_pre_ping's connection-ping-under-greenlet when reloading a row another
+    # connection just mutated (observed as sqlalchemy.exc.MissingGreenlet here specifically).
+    incident_row = (
+        await db_session.execute(select(Incident).where(Incident.id == incident.id))
+    ).scalar_one()
+    assert incident_row.resolved_reason == "edited"
+    assert incident_row.resolved_at is not None
+
+    monitor_row = await db_session.get(Monitor, monitor_id)
+    assert monitor_row.last_state_at > before_edit
+    assert monitor_row.failing_since is None
+
+    notifications = (
+        await db_session.execute(
+            select(Notification).where(Notification.incident_id == incident.id)
+        )
+    ).all()
+    assert notifications == [], "an edit-resolve must never enqueue a notification"

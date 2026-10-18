@@ -56,6 +56,14 @@ class Incident(Base):
         CheckConstraint(
             "resolved_at IS NULL OR resolved_at >= started_at", name="resolved_after_started"
         ),
+        CheckConstraint(
+            "(resolved_reason IS NOT NULL) = (resolved_at IS NOT NULL)",
+            name="resolved_reason_matches_resolved",
+        ),
+        CheckConstraint(
+            "resolved_reason IS NULL OR resolved_reason IN ('recovered', 'paused', 'edited')",
+            name="resolved_reason_allowed",
+        ),
         UniqueConstraint("account_id", "id", name="uq_incidents_account_id_id"),
         Index(
             "uq_incidents_open_monitor",
@@ -89,6 +97,7 @@ class Incident(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
     cause: Mapped[str] = mapped_column(Text, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
     acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import socket
+import time
+from datetime import timedelta
 from urllib.parse import urlsplit
 
 import structlog
@@ -18,13 +20,14 @@ from app.core.db import create_engine, create_session_factory, wait_for_database
 from app.core.logging import configure_logging
 from app.core.redis import FailOpenRedis
 from app.core.tick_loop import run_tick_loop
+from app.engine.canary import CanaryTracker, run_canary_round
 from app.engine.claim import ClaimedMonitor, claim_due_monitors, oldest_due_lag_seconds
 from app.engine.db_bounds import bounded_transaction
 from app.engine.host_cap import check_host_cap
 from app.engine.http_probe import HttpProbe
 from app.engine.probe import Probe, ProbeResult, StubProbe
-from app.engine.results import write_result
 from app.engine.runner_state import delete_runner_state, upsert_runner_state
+from app.engine.state import apply_check_result
 
 TICK_SECONDS = 2
 LOG_EVERY_N_TICKS = 30
@@ -67,6 +70,12 @@ class _RunnerContext:
         self.semaphore = asyncio.Semaphore(settings.runner_concurrency)
         self.in_flight_tasks: set[asyncio.Task[None]] = set()
         self.consecutive_db_failures = 0
+        # Day 8: canary self-health, driven from on_tick (see _maybe_schedule_canary_round) --
+        # NOT a second run_tick_loop, which would silently steal the main loop's SIGTERM/SIGINT
+        # handling (asyncio keeps only one handler per signal; see run()'s startup round below).
+        self.canary = CanaryTracker()
+        self.canary_tasks: set[asyncio.Task[None]] = set()
+        self.last_canary_round_at = 0.0
 
 
 async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
@@ -87,11 +96,25 @@ async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
     try:
         async with asyncio.timeout(deadline_seconds):
             async with ctx.semaphore:
+                probe_start_monotonic = time.monotonic()
                 result: ProbeResult = await ctx.probe.check(claimed)
+            # DB-anchored claimed_at (from this monitor's claim batch) plus the monotonic delta
+            # since then -- a skew-free, round-trip-free approximation of the probe's wall-clock
+            # start time. See app/engine/state.py's module docstring for the full rationale.
+            probe_started_at = claimed.claimed_at + timedelta(
+                seconds=probe_start_monotonic - claimed.claim_monotonic
+            )
             async with ctx.session_factory() as session:
                 async with bounded_transaction(session, ctx.settings):
-                    written = await write_result(session, claimed, result)
-            if not written:
+                    outcome = await apply_check_result(
+                        session,
+                        claimed,
+                        result,
+                        probe_started_at=probe_started_at,
+                        suppressed=not ctx.canary.ok,
+                        recheck_delay_seconds=ctx.settings.recheck_delay_seconds,
+                    )
+            if not outcome.written:
                 logger.info("check_result_discarded_monitor_inactive", monitor_id=str(claimed.id))
     except TimeoutError:
         logger.warning(
@@ -135,7 +158,11 @@ async def _report_runner_state(ctx: _RunnerContext) -> bool:
             async with bounded_transaction(session, ctx.settings):
                 lag_seconds = await oldest_due_lag_seconds(session)
                 await upsert_runner_state(
-                    session, ctx.runner_id, len(ctx.in_flight_tasks), lag_seconds
+                    session,
+                    ctx.runner_id,
+                    len(ctx.in_flight_tasks),
+                    lag_seconds,
+                    canary_ok=ctx.canary.ok,
                 )
         return True
     except _RUNNER_TXN_ERRORS as exc:
@@ -144,8 +171,28 @@ async def _report_runner_state(ctx: _RunnerContext) -> bool:
         return False
 
 
+async def _run_canary_round_and_update(ctx: _RunnerContext) -> None:
+    ok = await run_canary_round(ctx.probe, ctx.settings.canary_urls_list)
+    ctx.canary.update(ok)
+
+
+def _maybe_schedule_canary_round(ctx: _RunnerContext) -> None:
+    """Fire-and-forget: gated by elapsed wall time, never awaited inline, so a slow canary round
+    never delays claim/dispatch. Tracked in its own set (not in_flight_tasks) so it doesn't
+    perturb the free-slot calculation that set drives."""
+    now = time.monotonic()
+    if now - ctx.last_canary_round_at < ctx.settings.canary_interval_seconds:
+        return
+    ctx.last_canary_round_at = now
+    task = asyncio.create_task(_run_canary_round_and_update(ctx))
+    ctx.canary_tasks.add(task)
+    task.add_done_callback(ctx.canary_tasks.discard)
+
+
 async def on_tick(ctx: _RunnerContext) -> None:
     failures_before = ctx.consecutive_db_failures
+
+    _maybe_schedule_canary_round(ctx)
 
     claimed = await _claim_tick(ctx)
     for monitor in claimed:
@@ -197,6 +244,13 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
     redis = FailOpenRedis(settings.redis_url)
     ctx = _RunnerContext(runner_id=runner_id, settings=settings, probe=resolved_probe, redis=redis)
 
+    # One canary round before the first claim -- the runner must know its own health before it
+    # judges anything else. Bounded (run_canary_round's own round_timeout_seconds), so this is
+    # at most a few seconds of startup delay against a 2s tick cadence.
+    startup_canary_ok = await run_canary_round(resolved_probe, settings.canary_urls_list)
+    ctx.canary.update(startup_canary_ok)
+    ctx.last_canary_round_at = time.monotonic()
+
     async def _on_tick(_tick: int) -> None:
         await on_tick(ctx)
 
@@ -209,9 +263,10 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
             on_tick=_on_tick,
         )
     finally:
-        if ctx.in_flight_tasks:
+        drain_tasks = ctx.in_flight_tasks | ctx.canary_tasks
+        if drain_tasks:
             done, pending = await asyncio.wait(
-                ctx.in_flight_tasks, timeout=settings.runner_drain_seconds
+                drain_tasks, timeout=settings.runner_drain_seconds
             )
             logger.info("runner_drain_complete", finished=len(done), abandoned=len(pending))
         else:

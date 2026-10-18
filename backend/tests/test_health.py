@@ -30,6 +30,24 @@ async def test_readyz_reports_db_ok(client: AsyncClient, db_session: AsyncSessio
     assert body["status"] == "ok"
     assert body["checks"]["db"] == "ok"
     assert body["checks"]["runner"] == "ok"
+    assert body["checks"]["canary"] == "ok"  # canary_ok defaults True
+
+
+async def test_readyz_reports_canary_degraded_but_still_returns_200(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await upsert_runner_state(
+        db_session, f"runner-{uuid.uuid4().hex[:8]}", 0, 0.0, canary_ok=False
+    )
+    await db_session.commit()
+
+    response = await client.get("/readyz")
+    # Canary health is advisory -- never fails readiness on its own.
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["checks"]["runner"] == "ok"
+    assert body["checks"]["canary"] == "degraded"
 
 
 async def test_readyz_reports_redis_unavailable_but_still_returns_200(

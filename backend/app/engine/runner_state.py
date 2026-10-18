@@ -14,7 +14,11 @@ from app.core.models import RunnerState
 
 
 async def upsert_runner_state(
-    session: AsyncSession, runner_id: str, in_flight: int, lag_seconds: float
+    session: AsyncSession,
+    runner_id: str,
+    in_flight: int,
+    lag_seconds: float,
+    canary_ok: bool = True,
 ) -> None:
     stmt = (
         pg_insert(RunnerState)
@@ -23,6 +27,7 @@ async def upsert_runner_state(
             last_tick_at=func.now(),
             in_flight=in_flight,
             lag_seconds=lag_seconds,
+            canary_ok=canary_ok,
         )
         .on_conflict_do_update(
             index_elements=["runner_id"],
@@ -30,6 +35,7 @@ async def upsert_runner_state(
                 "last_tick_at": func.now(),
                 "in_flight": in_flight,
                 "lag_seconds": lag_seconds,
+                "canary_ok": canary_ok,
             },
         )
     )

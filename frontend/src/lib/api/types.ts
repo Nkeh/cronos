@@ -43,6 +43,50 @@ export interface Monitor {
   status_changed_at: string
   created_at: string
   updated_at: string
+  open_incident_id: string | null
+}
+
+export type IncidentResolvedReason = 'recovered' | 'paused' | 'edited'
+
+export interface IncidentSubject {
+  type: 'monitor' | 'heartbeat'
+  id: string
+  name: string | null
+}
+
+export interface Incident {
+  id: string
+  subject: IncidentSubject
+  cause: string
+  last_error: string | null
+  started_at: string
+  confirmed_at: string | null
+  resolved_at: string | null
+  resolved_reason: IncidentResolvedReason | null
+  acknowledged_at: string | null
+  duration_seconds: number
+}
+
+export interface IncidentListResponse {
+  items: Incident[]
+  next_cursor: string | null
+}
+
+export interface CheckResultSummary {
+  is_up: boolean
+  status_code: number | null
+  error_kind: string | null
+  response_time_ms: number | null
+  checked_at: string
+  suppressed: boolean
+}
+
+export interface IncidentDetail extends Incident {
+  timeline: CheckResultSummary[]
+}
+
+export interface OpenIncidentCount {
+  count: number
 }
 
 export interface MonitorCreatePayload {

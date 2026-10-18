@@ -59,6 +59,18 @@ def test_allows_when_probe_kind_is_http() -> None:
     settings.check_production_guard()
 
 
+def test_refuses_when_fewer_than_three_canary_urls_configured() -> None:
+    settings = _production_settings(canary_urls="https://a.example,https://b.example")
+    with pytest.raises(ConfigurationError, match="CANARY_URLS"):
+        settings.check_production_guard()
+
+
+def test_allows_the_three_url_canary_default() -> None:
+    # The coded default (3 real connectivity-check endpoints) must pass with zero overrides.
+    settings = _production_settings()
+    settings.check_production_guard()
+
+
 def test_allows_ssrf_allow_hosts_outside_production() -> None:
     settings = _production_settings(env="development", ssrf_allow_hosts="chaos")
     settings.check_production_guard()

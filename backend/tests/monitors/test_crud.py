@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.helpers import login_as
+from tests.helpers import login_as, make_incident
 
 _PAYLOAD = {"name": "api", "url": "http://chaos:8000/health"}
 
@@ -68,6 +68,25 @@ async def test_cross_account_monitor_is_404_not_403(
             f"/api/v1/monitors/{monitor_id}", headers=headers
         )
         assert delete_resp.status_code == 404
+
+
+async def test_open_incident_id_populated_on_list_and_get(
+    client: AsyncClient, csrf_headers: dict, db_session: AsyncSession, app: FastAPI
+) -> None:
+    user = await login_as(client, db_session, app.state.clock)
+    create_resp = await client.post("/api/v1/monitors", json=_PAYLOAD, headers=csrf_headers)
+    monitor_id = create_resp.json()["id"]
+    assert create_resp.json()["open_incident_id"] is None
+
+    incident = await make_incident(db_session, user.account_id, monitor_id=monitor_id)
+    await db_session.commit()
+
+    get_resp = await client.get(f"/api/v1/monitors/{monitor_id}")
+    assert get_resp.json()["open_incident_id"] == str(incident.id)
+
+    list_resp = await client.get("/api/v1/monitors")
+    [item] = list_resp.json()
+    assert item["open_incident_id"] == str(incident.id)
 
 
 async def test_unverified_user_cannot_create_monitor(

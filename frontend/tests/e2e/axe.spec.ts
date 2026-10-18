@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { gotoRetrying } from './helpers/auth'
 import { AUTH_STATE_PATH, FIXTURES } from './helpers/shared-user'
+import { createOpenIncident } from './helpers/incident-fixture'
 
 const unauthPages = ['/login', '/signup', '/verify', '/forgot', '/reset']
 const themes = ['light', 'dark'] as const
@@ -68,6 +69,31 @@ test.describe('authenticated pages (seeded monitors)', () => {
       await page.getByRole('link', { name: 'Edit monitor' }).first().click()
       await page.waitForURL(/\/monitors\/.+\/edit/)
       await expect(page.locator('#name')).not.toHaveValue('')
+      await expectNoSeriousViolations(page)
+    })
+  }
+})
+
+test.describe('incidents pages', () => {
+  for (const theme of themes) {
+    test(`axe: /incidents list + detail, with a real open incident (${theme})`, async ({
+      page,
+    }) => {
+      // createOpenIncident's own check-now round trip (~2s runner tick + a bounded poll) is the
+      // dominant cost here, same budget as incidents.spec.ts's lifecycle test.
+      test.setTimeout(45000)
+
+      // Set before the fixture's own navigations (not after) -- this app's no-flash theme
+      // script reads prefers-color-scheme once per full page load, so the emulated value must
+      // be in effect before the FIRST goto, not just before the final one being audited.
+      await page.emulateMedia({ colorScheme: theme })
+
+      const fixture = await createOpenIncident(page, `axe-incidents-${theme}`)
+      // Leaves the page on /incidents with the open incident visible.
+      await expectNoSeriousViolations(page)
+
+      await page.getByRole('link', { name: fixture.monitorName }).click()
+      await page.waitForURL(/\/incidents\/.+/)
       await expectNoSeriousViolations(page)
     })
   }

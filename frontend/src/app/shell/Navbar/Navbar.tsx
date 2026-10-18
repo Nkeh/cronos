@@ -5,9 +5,11 @@ import { AccountMenu } from './AccountMenu'
 import { SearchDialog } from './SearchDialog'
 import { navItems } from './nav-items'
 import { cn } from '../../../lib/cn'
+import { useOpenIncidentCount } from '../../../features/incidents/hooks'
 
 export function Navbar() {
   const isCompact = useScrollDirection()
+  const { data: openIncidents } = useOpenIncidentCount()
 
   return (
     <nav
@@ -30,7 +32,7 @@ export function Navbar() {
                   to={item.to}
                   label={item.label}
                   icon={item.icon}
-                  badgeCount={item.to === '/incidents' ? 0 : undefined}
+                  badgeCount={item.to === '/incidents' ? openIncidents?.count ?? 0 : undefined}
                 />
               </Tooltip.Trigger>
               <Tooltip.Portal>

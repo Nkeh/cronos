@@ -4,6 +4,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gotoRetrying } from './helpers/auth'
 import { AUTH_STATE_PATH, FIXTURES } from './helpers/shared-user'
+import {
+  createDevAccountAndLogin,
+  openIncidentOnNewMonitor,
+  resolveIncident,
+} from './helpers/incident-fixture'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const SCREENSHOT_DIR = path.join(dirname, '..', 'screenshots')
@@ -105,4 +110,63 @@ test('capture the screenshot matrix @screenshots', async ({ browser }) => {
   // than signing up again (keeps this independent of the signup rate limit entirely).
   await captureGroup(browser, AUTH_PAGES, AUTH_STATE_PATH)
   await captureGroup(browser, SEEDED_PAGES, FIXTURES.seeded.statePath)
+})
+
+// Day 8: /incidents and /incidents/:id, across all three states the page actually renders
+// differently for (empty, an open incident, a resolved one). Unlike every other fixture above,
+// these need real runner-driven incident state, not just seeded monitor rows -- so they're built
+// here, locally and on demand, rather than as static storageState files from global-setup.ts
+// (which is deliberately kept fast and read-only-shaped; a 30s-recheck-wide incident lifecycle
+// doesn't belong in the setup every Playwright invocation pays for, even runs that don't touch
+// screenshots at all).
+test('capture the incidents screenshot matrix @screenshots', async ({ browser }) => {
+  test.setTimeout(5 * 60 * 1000)
+
+  const emptyStatePath = path.join(SCREENSHOT_DIR, '.auth-state-incidentsEmpty.json')
+  const openStatePath = path.join(SCREENSHOT_DIR, '.auth-state-incidentsOpen.json')
+  const resolvedStatePath = path.join(SCREENSHOT_DIR, '.auth-state-incidentsResolved.json')
+  let detailPath = ''
+
+  {
+    const page = await browser.newPage()
+    await createDevAccountAndLogin(page, 'screenshots-incidents-empty')
+    await gotoRetrying(page, '/incidents')
+    await page.context().storageState({ path: emptyStatePath })
+    await page.close()
+  }
+
+  {
+    const page = await browser.newPage()
+    await createDevAccountAndLogin(page, 'screenshots-incidents-open')
+    const fixture = await openIncidentOnNewMonitor(page, 'screenshots-incidents-open')
+    await page.getByRole('link', { name: fixture.monitorName }).click()
+    await page.waitForURL(/\/incidents\/.+/)
+    detailPath = new URL(page.url()).pathname
+    await page.context().storageState({ path: openStatePath })
+    await page.close()
+  }
+
+  {
+    const page = await browser.newPage()
+    await createDevAccountAndLogin(page, 'screenshots-incidents-resolved')
+    const fixture = await openIncidentOnNewMonitor(page, 'screenshots-incidents-resolved')
+    await resolveIncident(page, fixture)
+    await page.context().storageState({ path: resolvedStatePath })
+    await page.close()
+  }
+
+  await captureGroup(browser, [{ name: 'incidents-empty', path: '/incidents' }], emptyStatePath)
+  await captureGroup(
+    browser,
+    [
+      { name: 'incidents-open', path: '/incidents' },
+      { name: 'incident-detail', path: detailPath },
+    ],
+    openStatePath,
+  )
+  await captureGroup(
+    browser,
+    [{ name: 'incidents-resolved', path: '/incidents' }],
+    resolvedStatePath,
+  )
 })

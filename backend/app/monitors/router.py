@@ -26,6 +26,7 @@ from app.core.db import get_db_session
 from app.core.dependencies import get_settings_dep
 from app.core.errors import ApiError
 from app.engine import ssrf_policy
+from app.incidents.models import Incident
 from app.monitors.models import Monitor
 from app.monitors.schemas import MonitorCreate, MonitorPatch, MonitorPublic
 from app.plans.config import get_plan
@@ -69,6 +70,20 @@ async def _get_owned_monitor(
     return monitor
 
 
+async def _resolve_open_incident_silently(
+    db: AsyncSession, monitor_id: uuid.UUID, reason: str
+) -> None:
+    """Day 8 confirmed decision: pausing or editing a monitor with an open incident resolves it
+    immediately, with no notification -- the user already knows what they just did, and a
+    "resolved" alert would misleadingly suggest the target itself recovered. Never called from
+    the engine's own state machine (app/engine/state.py), which has its own 'recovered' path."""
+    await db.execute(
+        update(Incident)
+        .where(Incident.monitor_id == monitor_id, Incident.resolved_at.is_(None))
+        .values(resolved_at=text("now()"), resolved_reason=reason)
+    )
+
+
 async def _rejitter(db: AsyncSession, monitor_id: uuid.UUID, interval_seconds: int) -> None:
     jitter_seconds = round(random.uniform(0, interval_seconds), 3)
     await db.execute(
@@ -82,23 +97,32 @@ async def _rejitter(db: AsyncSession, monitor_id: uuid.UUID, interval_seconds: i
     )
 
 
+def _open_incident_id_subquery():
+    return (
+        select(Incident.id)
+        .where(Incident.monitor_id == Monitor.id, Incident.resolved_at.is_(None))
+        .correlate(Monitor)
+        .scalar_subquery()
+    )
+
+
+def _to_public(monitor: Monitor, open_incident_id: uuid.UUID | None) -> MonitorPublic:
+    return MonitorPublic.model_validate(monitor).model_copy(
+        update={"open_incident_id": open_incident_id}
+    )
+
+
 @router.get("", response_model=list[MonitorPublic])
 async def list_monitors(
     principal: AuthContext = Depends(require_scope("monitors:read")),
     db: AsyncSession = Depends(get_db_session),
 ) -> list[MonitorPublic]:
-    rows = (
-        (
-            await db.execute(
-                select(Monitor)
-                .where(Monitor.account_id == principal.user.account_id)
-                .order_by(Monitor.created_at)
-            )
-        )
-        .scalars()
-        .all()
+    rows = await db.execute(
+        select(Monitor, _open_incident_id_subquery().label("open_incident_id"))
+        .where(Monitor.account_id == principal.user.account_id)
+        .order_by(Monitor.created_at)
     )
-    return [MonitorPublic.model_validate(row) for row in rows]
+    return [_to_public(monitor, open_incident_id) for monitor, open_incident_id in rows]
 
 
 @router.get("/{monitor_id}", response_model=MonitorPublic)
@@ -108,7 +132,14 @@ async def get_monitor(
     db: AsyncSession = Depends(get_db_session),
 ) -> MonitorPublic:
     monitor = await _get_owned_monitor(db, principal.user.account_id, monitor_id)
-    return MonitorPublic.model_validate(monitor)
+    open_incident_id = (
+        await db.execute(
+            select(Incident.id).where(
+                Incident.monitor_id == monitor.id, Incident.resolved_at.is_(None)
+            )
+        )
+    ).scalar_one_or_none()
+    return _to_public(monitor, open_incident_id)
 
 
 @router.post("", response_model=MonitorPublic, status_code=201)
@@ -190,6 +221,7 @@ async def patch_monitor(
         monitor.ewma_var = None
         monitor.ewma_n = 0
         monitor.status = "paused" if not monitor.is_active else "new"
+        monitor.failing_since = None
 
     for field_name, value in data.items():
         setattr(monitor, field_name, value)
@@ -205,6 +237,18 @@ async def patch_monitor(
     await db.flush()
     if "interval_seconds" in data:
         await _rejitter(db, monitor.id, monitor.interval_seconds)
+    if target_changed:
+        # Day 8: a target change can race an in-flight probe against the OLD target on an
+        # ACTIVE monitor (pause has no such race -- state.py's own is_active guard already
+        # catches that case, and resume starts a monitor that had nothing in flight). Bumping
+        # last_state_at to now() ensures that late result is recognized as stale when it writes
+        # back, instead of being wrongly applied to the new target's state. Resolving any open
+        # incident here, silently, is the confirmed Day 8 decision -- see
+        # _resolve_open_incident_silently's docstring.
+        await db.execute(
+            update(Monitor).where(Monitor.id == monitor.id).values(last_state_at=text("now()"))
+        )
+        await _resolve_open_incident_silently(db, monitor.id, "edited")
     await db.commit()
     await db.refresh(monitor)
 
@@ -248,10 +292,11 @@ async def pause_monitor(
     _scope: AuthContext = Depends(require_scope("monitors:write")),
     db: AsyncSession = Depends(get_db_session),
 ) -> MonitorPublic:
-    # TODO (Day 8): decide what pausing does to an open incident.
     monitor = await _get_owned_monitor(db, user.account_id, monitor_id)
     monitor.is_active = False
     monitor.status = "paused"
+    await db.flush()
+    await _resolve_open_incident_silently(db, monitor.id, "paused")
     await db.commit()
     await db.refresh(monitor)
     return MonitorPublic.model_validate(monitor)

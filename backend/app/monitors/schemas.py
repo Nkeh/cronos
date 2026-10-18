@@ -76,5 +76,6 @@ class MonitorPublic(BaseModel):
     next_check_at: datetime
     last_checked_at: datetime | None
     status_changed_at: datetime
+    open_incident_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime

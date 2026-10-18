@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -134,6 +135,24 @@ async def test_scheduled_for_matches_pre_claim_next_check_at(db_session: AsyncSe
     assert len(claimed) == 1
     assert abs(claimed[0].scheduled_for - old_next_check_at) < timedelta(seconds=1)
     assert claimed[0].id == monitor.id
+
+
+async def test_claimed_at_and_claim_monotonic_present(db_session: AsyncSession) -> None:
+    """Day 8: every ClaimedMonitor carries a DB-authoritative claimed_at plus a same-process
+    monotonic reading, so the state machine can derive a skew-free probe-start timestamp
+    without an extra round trip. See app/engine/state.py."""
+    account = await make_account(db_session)
+    await make_monitor(db_session, account.id, next_check_at=_utcnow() - timedelta(seconds=5))
+    await db_session.commit()
+
+    before = time.monotonic()
+    claimed = await claim_due_monitors(db_session, free_slots=10)
+    after = time.monotonic()
+    await db_session.commit()
+
+    assert len(claimed) == 1
+    assert abs(claimed[0].claimed_at - _utcnow()) < _TOLERANCE
+    assert before <= claimed[0].claim_monotonic <= after
 
 
 async def test_claim_lock_timeout_gives_up_and_a_later_claim_succeeds(

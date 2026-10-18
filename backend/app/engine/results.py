@@ -26,9 +26,9 @@ _WRITE_RESULT_SQL = text(
     )
     INSERT INTO check_results
         (monitor_id, checked_at, scheduled_for, is_up, status_code, response_time_ms, timings,
-         error, error_kind)
+         error, error_kind, suppressed)
     SELECT :monitor_id, now(), :scheduled_for, :is_up, :status_code, :response_time_ms,
-           CAST(:timings AS jsonb), :error, :error_kind
+           CAST(:timings AS jsonb), :error, :error_kind, :suppressed
     FROM m
     RETURNING id
     """
@@ -36,10 +36,14 @@ _WRITE_RESULT_SQL = text(
 
 
 async def write_result(
-    session: AsyncSession, claimed: ClaimedMonitor, result: ProbeResult
+    session: AsyncSession, claimed: ClaimedMonitor, result: ProbeResult, *, suppressed: bool = False
 ) -> bool:
     """Returns True if a check_results row was actually written (the monitor was still
-    active), False if the monitor was paused/deleted mid-flight (nothing written, no error)."""
+    active), False if the monitor was paused/deleted mid-flight (nothing written, no error).
+
+    `suppressed=True` is Day 8's canary-degraded path: a check_results row is written as
+    evidence a probe happened, but it is explicitly excluded from the state machine (see
+    app/engine/state.py) -- counters, status, and incidents are untouched."""
     db_result = await session.execute(
         _WRITE_RESULT_SQL,
         {
@@ -51,6 +55,7 @@ async def write_result(
             "timings": json.dumps(result.timings) if result.timings is not None else None,
             "error": result.error,
             "error_kind": result.error_kind,
+            "suppressed": suppressed,
         },
     )
     return db_result.first() is not None

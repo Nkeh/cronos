@@ -24,7 +24,7 @@ from app.core.clock import Clock
 from app.heartbeats.models import Heartbeat, HeartbeatPing
 from app.incidents.models import Incident
 from app.monitors.models import CheckResult, Monitor
-from app.notifications.models import NotificationChannel
+from app.notifications.models import Notification, NotificationChannel
 from app.status_pages.models import StatusPage
 
 
@@ -230,6 +230,22 @@ async def make_notification_channel(
     session.add(channel)
     await session.flush()
     return channel
+
+
+async def make_notification(
+    session: AsyncSession, account_id: uuid.UUID, channel_id: uuid.UUID, **overrides: Any
+) -> Notification:
+    defaults: dict[str, Any] = {
+        "account_id": account_id,
+        "channel_id": channel_id,
+        "event": "opened",
+        "payload": {},
+    }
+    defaults.update(overrides)
+    notification = Notification(**defaults)
+    session.add(notification)
+    await session.flush()
+    return notification
 
 
 async def make_incident(

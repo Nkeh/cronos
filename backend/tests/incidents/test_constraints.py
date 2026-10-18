@@ -125,7 +125,7 @@ async def test_one_open_incident_per_monitor(db_session: AsyncSession) -> None:
     await db_session.execute(
         update(Incident)
         .where(Incident.id == first_id)
-        .values(resolved_at=datetime.now(timezone.utc))
+        .values(resolved_at=datetime.now(timezone.utc), resolved_reason="recovered")
     )
     await db_session.commit()
 
@@ -175,3 +175,64 @@ async def test_valid_incident_succeeds(db_session: AsyncSession) -> None:
     await db_session.commit()
     incident = await make_incident(db_session, account.id, monitor_id=monitor.id)
     assert incident.resolved_at is None
+
+
+async def test_resolved_reason_requires_resolved_at(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id)
+    await db_session.commit()
+
+    with pytest.raises(IntegrityError):
+        await make_incident(
+            db_session, account.id, monitor_id=monitor.id, resolved_reason="recovered"
+        )
+    await db_session.rollback()
+
+
+async def test_resolved_at_requires_resolved_reason(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id)
+    await db_session.commit()
+
+    with pytest.raises(IntegrityError):
+        await make_incident(
+            db_session, account.id, monitor_id=monitor.id, resolved_at=datetime.now(timezone.utc)
+        )
+    await db_session.rollback()
+
+
+async def test_resolved_reason_rejects_unknown_value(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id)
+    await db_session.commit()
+
+    with pytest.raises(IntegrityError):
+        await make_incident(
+            db_session,
+            account.id,
+            monitor_id=monitor.id,
+            resolved_at=datetime.now(timezone.utc),
+            resolved_reason="made_up",
+        )
+    await db_session.rollback()
+
+
+@pytest.mark.parametrize("reason", ["recovered", "paused", "edited"])
+async def test_every_resolved_reason_is_accepted(db_session: AsyncSession, reason: str) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id)
+    await db_session.commit()
+    # Explicit started_at <= resolved_at: make_incident's own started_at default is computed
+    # inside the function, a moment after this resolved_at is evaluated by the caller, so
+    # relying on both defaults independently can put started_at microseconds AFTER resolved_at
+    # and trip ck_incidents_resolved_after_started.
+    started_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    incident = await make_incident(
+        db_session,
+        account.id,
+        monitor_id=monitor.id,
+        started_at=started_at,
+        resolved_at=datetime.now(timezone.utc),
+        resolved_reason=reason,
+    )
+    assert incident.resolved_reason == reason

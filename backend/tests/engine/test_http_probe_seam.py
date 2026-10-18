@@ -21,6 +21,8 @@ async def test_blocked_address_through_real_transport() -> None:
         expected_status="2xx",
         timeout_seconds=5,
         scheduled_for=datetime.now(timezone.utc),
+        claimed_at=datetime.now(timezone.utc),
+        claim_monotonic=0.0,
     )
 
     result = await probe.check(monitor)

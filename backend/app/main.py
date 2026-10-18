@@ -20,6 +20,7 @@ from app.core.errors import register_error_handlers
 from app.core.logging import RequestIDMiddleware, configure_logging
 from app.core.openapi import custom_openapi
 from app.core.redis import FailOpenRedis
+from app.incidents.router import router as incidents_router
 from app.monitors.router import router as monitors_router
 
 logger = structlog.get_logger()
@@ -71,6 +72,7 @@ def create_app(
     app.include_router(api_keys_router)
     app.include_router(accounts_router)
     app.include_router(monitors_router)
+    app.include_router(incidents_router)
     if settings.env == "development":
         # Dev-only fixture endpoints for Playwright (no Docker access from the
         # pw-tests container) — never imported, let alone mounted, outside
@@ -101,14 +103,24 @@ def create_app(
             checks["redis"] = "unavailable"
 
         async with app.state.engine.connect() as conn:
-            runner_fresh = await conn.scalar(
-                text(
-                    "SELECT EXISTS (SELECT 1 FROM runner_state "
-                    "WHERE last_tick_at > now() - interval '30 seconds')"
+            runner_row = (
+                await conn.execute(
+                    text(
+                        "SELECT "
+                        "EXISTS (SELECT 1 FROM runner_state "
+                        "        WHERE last_tick_at > now() - interval '30 seconds') AS fresh, "
+                        "NOT EXISTS (SELECT 1 FROM runner_state "
+                        "            WHERE last_tick_at > now() - interval '30 seconds' "
+                        "            AND NOT canary_ok) AS canary_ok"
+                    )
                 )
-            )
-        checks["runner"] = "ok" if runner_fresh else "stale"
-        if not runner_fresh:
+            ).one()
+        checks["runner"] = "ok" if runner_row.fresh else "stale"
+        # Canary health is reported but never fails readiness: a degraded canary means the
+        # internet is unhealthy, not this process -- taking an otherwise-fine runner out of
+        # rotation over that would help no one. Day 14's external watchdog is what acts on it.
+        checks["canary"] = "ok" if runner_row.canary_ok else "degraded"
+        if not runner_row.fresh:
             return JSONResponse(status_code=503, content={"status": "degraded", "checks": checks})
 
         # TODO (Day 9): also fail readiness if the outbox's oldest pending row is over 5 minutes old.

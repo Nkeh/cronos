@@ -27,6 +27,8 @@ def _monitor(path: str, **overrides) -> ClaimedMonitor:
         expected_status="2xx",
         timeout_seconds=5,
         scheduled_for=datetime.now(timezone.utc),
+        claimed_at=datetime.now(timezone.utc),
+        claim_monotonic=0.0,
     )
     defaults.update(overrides)
     return ClaimedMonitor(**defaults)
@@ -151,6 +153,8 @@ async def test_tls_bad_mode_reports_tls_error_kind() -> None:
         expected_status="2xx",
         timeout_seconds=5,
         scheduled_for=datetime.now(timezone.utc),
+        claimed_at=datetime.now(timezone.utc),
+        claim_monotonic=0.0,
     )
 
     result = await _probe().check(monitor)

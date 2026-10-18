@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -12,7 +13,14 @@ from app.core.redis import FailOpenRedis
 from app.engine.claim import ClaimedMonitor, claim_due_monitors
 from app.engine.http_probe import HttpProbe
 from app.engine.probe import ProbeResult, StubProbe
-from app.engine.runner import _build_default_probe, _RunnerContext, _run_one, _spawn, on_tick
+from app.engine.runner import (
+    _build_default_probe,
+    _maybe_schedule_canary_round,
+    _RunnerContext,
+    _run_one,
+    _spawn,
+    on_tick,
+)
 from app.monitors.models import CheckResult, Monitor
 from tests.helpers import make_account, make_monitor
 
@@ -40,12 +48,17 @@ def _overdue() -> datetime:
 def _make_ctx(**settings_overrides: object) -> _RunnerContext:
     settings = get_settings().model_copy(update=settings_overrides)
     probe = StubProbe(delay_min_ms=10, delay_max_ms=10, outcome="up")
-    return _RunnerContext(
+    ctx = _RunnerContext(
         runner_id=f"test-runner-{uuid.uuid4().hex[:8]}",
         settings=settings,
         probe=probe,
         redis=FailOpenRedis(settings.redis_url),
     )
+    # Simulates "a canary round already ran" so on_tick's interval gate doesn't spawn an
+    # unawaited background canary task in every test that isn't actually testing canaries --
+    # see tests/engine/test_canary.py for the dedicated scheduling/degradation tests.
+    ctx.last_canary_round_at = time.monotonic()
+    return ctx
 
 
 async def test_capacity_never_exceeds_runner_concurrency(db_session: AsyncSession) -> None:
@@ -172,6 +185,7 @@ async def test_db_outage_on_tick_never_raises_and_increments_failures() -> None:
         probe=probe,
         redis=FailOpenRedis(settings.redis_url),
     )
+    ctx.last_canary_round_at = time.monotonic()
     try:
         await on_tick(ctx)  # must not raise
         assert ctx.consecutive_db_failures >= 1
@@ -227,6 +241,22 @@ async def test_shutdown_drain_finishes_fast_tasks_and_abandons_slow_ones(
         )
     ).first()
     assert slow_row is None
+
+
+async def test_canary_round_gated_by_interval() -> None:
+    ctx = _make_ctx(canary_interval_seconds=30)
+    try:
+        ctx.last_canary_round_at = time.monotonic()
+        _maybe_schedule_canary_round(ctx)
+        assert ctx.canary_tasks == set(), "not due yet -- interval hasn't elapsed"
+
+        ctx.last_canary_round_at = time.monotonic() - 31
+        _maybe_schedule_canary_round(ctx)
+        assert len(ctx.canary_tasks) == 1
+        await asyncio.gather(*ctx.canary_tasks)
+        assert ctx.canary.ok is True  # StubProbe(outcome="up") -- every canary URL "succeeds"
+    finally:
+        await ctx.engine.dispose()
 
 
 def test_build_default_probe_returns_stub_for_stub_kind() -> None:
