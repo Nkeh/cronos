@@ -24,6 +24,11 @@ from app.core.config import Settings, get_settings
 from app.core.db import wait_for_database
 from app.core.logging import configure_logging
 from app.core.tick_loop import run_tick_loop
+# Side-effect only: same fix as app/engine/runner.py (see its comment for the full story) --
+# this process never otherwise imports app.accounts.models, so the first ORM flush of a
+# Notification row (enqueue_cap_reached_once_per_day below, or any NotificationAttempt insert in
+# record_outcome) would raise NoReferencedTableError resolving Notification.account_id's FK.
+from app.db import models as _all_models  # noqa: F401
 from app.engine.db_bounds import bounded_transaction
 from app.notifier.caps import is_over_cap
 from app.notifier.claim import ClaimedNotification, claim_due_notifications

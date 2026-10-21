@@ -7,6 +7,7 @@ tests/engine/test_error_classification.py for HttpProbe.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import aiosmtplib
@@ -15,6 +16,13 @@ import pytest
 from app.core.config import get_settings
 from app.notifier.delivery import DeliveryContext
 from app.notifier.email import deliver_email
+
+# In production these are always real DeliveryContext fields reused across other events too, so
+# the dataclass itself keeps them Optional -- but every Incident.started_at is NOT NULL, and
+# delivery.py never builds a context for "opened"/"resolved" from a None value, so a realistic
+# default here is a real datetime, not None.
+_INCIDENT_STARTED_AT = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+_INCIDENT_RESOLVED_AT = datetime(2026, 10, 20, 12, 1, 0, tzinfo=timezone.utc)
 
 
 def _ctx(event: str = "opened", **overrides) -> DeliveryContext:
@@ -31,8 +39,8 @@ def _ctx(event: str = "opened", **overrides) -> DeliveryContext:
         subject_name="api",
         incident_id=uuid.uuid4(),
         incident_cause="http_status",
-        incident_started_at=None,
-        incident_resolved_at=None,
+        incident_started_at=_INCIDENT_STARTED_AT,
+        incident_resolved_at=_INCIDENT_RESOLVED_AT,
         incident_duration_seconds=1.0,
         flap_phase="started",
         cap_kind="email",

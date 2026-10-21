@@ -166,99 +166,174 @@
   `status IN ('pending','sending')` (needed so the claim query can find expired leases), and adds
   a `(account_id, sent_at)` partial index for the daily-cap count.
 
-### Tests: 339 -> ~419 pytest (not executed this session — see Deviations); Vitest 9 -> 13 files, 45 -> 57 tests (executed)
+Verified this session against the real running stack:
+```
+$ docker compose exec api alembic current
+0011 (head)
+$ docker compose exec api alembic check
+No new upgrade operations detected.
+$ docker compose exec api alembic downgrade -1 && docker compose exec api alembic upgrade head
+OK -- round trip clean, alembic check still clean afterward.
+```
+
+### Tests: 339 -> 423 passed, 1 deselected (pytest, executed); Vitest 9 -> 13 files / 45 -> 57 tests (executed)
 
 ```
-cd frontend && npx vitest run --pool=threads
+$ docker compose exec api pytest -q
+423 passed, 1 deselected in 251.24s (0:04:11)
+```
+
+```
+$ docker compose exec frontend npx vitest run --pool=threads
 Test Files  13 passed (13)
      Tests  57 passed (57)
-Duration    142.35s
 ```
 
-```
-cd frontend && npx tsc --noEmit
-(clean, 0 errors)
-```
-
-```
-cd frontend && npx eslint src/features/channels src/pages/channels-verify src/components/ui/Drawer.tsx \
-  src/lib/api/channels.ts src/lib/api/types.ts src/lib/api/error-copy.ts src/app/router.tsx \
-  src/app/shell/Navbar/AccountMenu.tsx src/features/monitors/MonitorFormPage.tsx
-(exit 0, no output)
-```
-
-```
-cd backend && python -m compileall -q app tests ../chaos/app
-(clean, 0 errors)
-```
-
-The **~419 pytest figure is a count of new test functions added (80), not an executed number** —
-see Deviations. Backend test tally for this day: 69 entirely-new-file tests
-(`test_signing`=4, `test_claim`=9, `test_record`=7, `test_caps`=4, `test_webhook`=9, `test_email`=6,
-`test_crypto`=4, `test_maintenance`=4, `test_router` (notifications)=19, `test_channels`
-(monitors)=3) + 11 added to existing files (`test_state`+3, `test_service`+4, `test_verify`+1,
-`test_config_guard`+3) = 80 new tests on top of Day 8's confirmed 339.
+Playwright (prod build, against the real Compose network) ran to **genuine completion under this
+session's host conditions**, not a clean pass — see Live verification below for the honest
+breakdown and why every failure is environmental, not a Day 9 regression.
 
 ### Live verification (commands + real output)
 
-**Docker Desktop was unavailable for the entire session** (checked at session start, mid-session,
-and again immediately before writing this doc):
+This session picked up Day 9 code that was written entirely while Docker Desktop was down and
+had never been executed. Per this session's own governing instruction, step 0 was `docker info`
+(engine was up this time) and the entire chain below was then run for real, fixing every failure
+found along the way.
 
+**a. Bring-up + migrations**
 ```
-$ docker info
-Server:
-failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the
-path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system
-cannot find the file specified.
+$ uv lock   # backend/pyproject.toml had cryptography==46.0.1 added last session without
+            # regenerating uv.lock -- `uv sync --locked` refused to start until this ran.
+$ docker compose up -d --build
+$ docker compose exec api alembic upgrade head        # -> 0011 (head)
+$ docker compose exec api alembic check                # -> No new upgrade operations detected.
+$ docker compose exec api alembic downgrade -1 && docker compose exec api alembic upgrade head
+                                                         # -> round trip clean
 ```
 
-With Docker down, there is no running Postgres, no `chaos` container, no Mailpit, and no
-Playwright browser runtime available. What **was** verified, using a local Windows Python 3.12
-and Node v22.20.0 install instead of the Compose stack:
+**b. Backend pytest** — fixed 20 real failures (19 test-authoring bugs, 1 real app bug), detailed
+in "Deviations"/"Known issues" below:
+```
+$ docker compose exec api pytest -q
+423 passed, 1 deselected in 251.24s (0:04:11)
+```
 
-- **Backend syntax**: `python -m compileall -q app tests ../chaos/app` — clean, every new/
-  modified file (notifier modules, channels API, chaos receiver, all new test files) parses.
-- **Frontend types**: `npx tsc --noEmit` — clean, 0 errors across the full frontend including the
-  new channels feature, `Drawer.tsx`, and the monitor-form routing changes.
-- **Frontend lint**: `npx eslint` over every new/modified frontend file — clean, exit 0, zero
-  warnings or errors.
-- **Frontend unit tests**: `npx vitest run --pool=threads` (see note below on `--pool=threads`) —
-  full suite, 13 files / 57 tests, all passing, actually executed (not just authored).
+**c. Vitest inside the container** (not host Node — a stray host-side `frontend/node_modules`
+from an earlier host run exists on disk but is gitignored and confirmed untracked by `git
+status`):
+```
+$ docker compose exec frontend npx vitest run --pool=threads
+Test Files  13 passed (13)
+     Tests  57 passed (57)
+```
+Two Radix Dialog/Drawer cold-start timeouts were seen on earlier runs (whichever test mounts the
+first portal tree in a worker pays a one-time jsdom cost that can land past the 5000ms default
+under this container's CPU budget); fixed by raising `testTimeout` globally in
+`vitest.config.ts` to 15000ms rather than per-test, confirmed clean on three consecutive re-runs.
 
-**What was NOT executed this session, honestly flagged rather than assumed passing**:
+**d. Playwright** — default suite and `@screenshots`, prod build, against the real stack:
+```
+$ npx playwright test
+11 passed, 5 failed, 34 did not run (globalTimeout 900s reached)
 
-- The full backend pytest suite (all ~419 tests, including every notifier/channels/flapping/caps
-  test written this day) — requires real Postgres.
-- `tests/notifier/test_webhook.py` and the live portions of `tests/notifications/test_router.py`
-  — require the `chaos` container specifically.
-- `tests/notifier/test_email.py`'s exact `aiosmtplib` exception constructor signatures
-  (`SMTPResponseException(code, message)`, `SMTPConnectError(message)`, etc.) are written from
-  training-data confidence, not confirmed against the actually-installed `aiosmtplib==5.1.3` —
-  no environment with that dependency installed was available to import-check it.
-- The entire Playwright suite, including the new `channels.spec.ts` and the `axe.spec.ts`/
-  `screenshots.spec.ts` extensions — needs a running dev/prod build, Chromium, and the Compose
-  network.
-- Live acceptance steps 1–7 from the plan (real outage → email+webhook delivery latency, scripted
-  `[500,500,200]` retry sequence, 404 permanent failure, lease-expiry redelivery after a killed
-  notifier, flap start/stop notices, cap suppression + one `cap_reached` email, a mid-delivery DB
-  restart) — all require the running Compose stack and were not attempted.
-- `alembic upgrade head` / `alembic check` for migration `0011` — requires Postgres.
+$ npx playwright test --grep '@screenshots'
+0 passed, 1 failed, 1 did not run (its own 720000ms per-test override still exceeded)
+```
+Every one of the 6 failures is the identical signature: `Tearing down "context" exceeded the
+test timeout of 30000ms` — browser-context **teardown**, after the test body itself already
+finished, blowing the 30s ceiling under sustained host CPU contention (confirmed via `docker top`
+showing real, accumulating chromium/renderer CPU time, not a hung/zero-activity process; and via
+an isolated re-run of one such test passing cleanly in 96s with no other load on the host). This
+is the same environmental characteristic CLAUDE.md already documents from Day 5b. Per Oryn's
+explicit standing instruction, `playwright.config.ts`'s `timeout: 30000` was **not** raised to
+paper over this — the honest result is reported as-is. No new contact sheets from `@screenshots`
+exist to list: the one screenshot-matrix test did not complete.
 
-A sandbox-specific note for future sessions: Vitest's default `--pool=forks` hangs indefinitely in
-this Windows/git-bash environment (`[vitest-pool-runner]: Timeout waiting for worker to respond`,
-every file). `--pool=threads` works reliably and is now the way to run this suite here.
+**e. The 7 live-acceptance steps**, scripted against the real running stack (account/channel
+setup via the real Channels/Monitors API, chaos via `/_control`, verification via direct
+Postgres reads and Mailpit's API) — all 7 passed:
+
+1. **Real outage → email + verified webhook, then recovery, with latency.** Dev's
+   `FLAP_THRESHOLD=1` (`.env`) means a monitor's very first incident already crosses the flap
+   threshold, so the actual event fired is `flapping` (phase `started`), not a plain `opened` —
+   functionally the same DOWN notice through the same pipeline this step verifies (see Known
+   issues). Real numbers:
+   ```
+   incident opened: 2.3s after outage
+   DOWN notification (webhook): created_at 14:27:49.273  sent_at 14:27:49.958  latency 0.68s
+   DOWN notification (email):   created_at 14:27:49.273  sent_at 14:27:49.964  latency 0.69s
+   Mailpit subject: "[Cronos] FLAPPING: Live 1 - outage+recovery"
+   chaos webhook log: verified=true
+   incident resolved: 2.2s after recovery
+   ```
+   Both latencies are far under NFR-3's <10s median. The resolved notice is correctly silent while
+   flapping (FR-6.3) — exercised explicitly in step 5.
+2. **Scripted `[500, 500, 200]` webhook retry.**
+   ```
+   notification_attempts: [('retry', 500), ('retry', 500), ('sent', 200)]
+   chaos log, 3 deliveries, same id: 07ff9ae1-dda0-4479-be69-009b686c7fd6 (x3)
+   final status: sent
+   ```
+3. **404 → permanent failure, no retry.**
+   ```
+   final status=failed attempts=1 notification_attempts=[('failed', 404)]
+   ```
+4. **Lease recovery after killing the notifier mid-delivery.** Polled until a claimed row hit
+   `status='sending'`, `docker compose kill -s SIGKILL notifier` at that instant, waited past the
+   dev 10s lease, restarted the notifier:
+   ```
+   attempts: 1 -> 2 (reclaimed)
+   notification_attempts: exactly 1 row (outcome=sent) -- the killed first attempt never got to
+     record_outcome, proving it genuinely never wrote anything
+   chaos webhook log: same delivery id (62a9fc88-...) arrives exactly once, verified=true
+   ```
+5. **Flapping started/ended notices** (dev `FLAP_WINDOW_MINUTES=1`, `FLAP_STABLE_MINUTES=1`,
+   `FLAP_THRESHOLD=1`):
+   ```
+   flapping_since set -> flapping-started notice sent -> (stable window) -> flapping-ended
+   notice sent -> flapping_since cleared
+   ```
+6. **Cap suppression + exactly one `cap_reached`.** `PlanLimits.webhooks_per_day=500` has no dev
+   override (by design — CLAUDE.md: no hard-coded limits outside `PLANS`), so "already at cap"
+   was simulated with 500 synthetic `sent` rows for the test account, then a real send attempted:
+   ```
+   over-cap notification status: suppressed
+   cap_reached rows today for this account+channel: 1
+   ```
+7. **`docker compose restart db` mid-delivery.** Polled until a row hit `sending`, restarted
+   `db`, waited for it to report healthy again:
+   ```
+   db healthy again in ~12s; in-flight delivery (no DB connection held during the actual send)
+   completed and wrote its outcome on the first attempt once Postgres was back
+   attempts=1, status=sent
+   SELECT * FROM notifications WHERE status='sending' AND next_attempt_at < now(); -- 0 rows
+   ```
+   Nothing anywhere in the account was left stuck in `sending` past its lease.
 
 ### Deviations from SRS / CLAUDE.md
 
-- **Could not "verify against the running Compose stack," CLAUDE.md's own non-negotiable
-  (Workflow rule 3).** Docker Desktop was down for the entire session despite being checked
-  multiple times, including immediately before writing this doc. Everything that depends on
-  Postgres/chaos/Mailpit/a browser runtime (the full pytest suite, Playwright, and all 8 live-
-  acceptance steps from the plan) is authored and believed correct from careful reading of the
-  existing Day 6–8 patterns it reuses, but is **unexecuted**. This is the day's primary deviation
-  and should be the first thing re-run once Docker is available — `docker compose up -d --build`,
-  `alembic upgrade head`, `pytest -q`, `npx playwright test` (+`@screenshots`), then the 8 live
-  steps from the approved plan, in that order.
+- **A real Day 9 bug, found and fixed this session**: `app/engine/runner.py` and
+  `app/notifier/__main__.py` never imported `app.accounts.models` (or most other domain models)
+  — every pre-Day-9 write in these processes went through raw parameterized SQL, which never
+  needed a model class to exist. Day 9's `enqueue_notifications`/`enqueue_flapping_notification`
+  (`app/notifications/service.py`) is the **first** ORM `session.add()` in either process's
+  history, building a `Notification` row whose `account_id` column is a string
+  `ForeignKey("accounts.id")`. SQLAlchemy resolves that lazily against `Base.metadata` at flush
+  time — and since `accounts` (and everything else these processes never otherwise imported) was
+  missing from it, **every single incident notification ever enqueued from the runner or
+  notifier raised `sqlalchemy.exc.NoReferencedTableError`**, silently caught by the broad
+  `except Exception` handler and logged as `check_task_unexpected_error`/
+  `notification_task_unexpected_error` — rolling back the *entire* transaction, including the
+  check-result write it shared, so a monitor could fail forever without ever producing a
+  `check_results` row. This is not dev-config-specific: in production (`flap_threshold=3`, not 1)
+  the very first "opened" notification on any monitor's third incident would hit the identical
+  crash. Fixed with the same one-line fix `alembic/env.py` already uses for the same reason:
+  `from app.db import models as _all_models  # noqa: F401`, added to both entrypoints. Confirmed
+  via direct `Base.metadata.tables` introspection before/after, and via the full live-acceptance
+  run above (every step depends on this working).
+- **Could not get a clean Playwright run** — see Live verification (d). Reported honestly per
+  CLAUDE.md; not treated as a Day 9 regression per the Day 5b precedent, and the 30s test
+  ceiling was deliberately left untouched.
 - **`notification_attempts.id` is a bigint PK**, a third exception to CLAUDE.md's stated
   `check_result`/`heartbeat_ping` bigint list, for the same reason: a high-volume, append-only log
   table where a UUID PK would add nothing and cost more per row.
@@ -284,13 +359,25 @@ every file). `--pool=threads` works reliably and is now the way to run this suit
 
 ### Known issues / follow-ups
 
-- Everything in this session is Docker-blocked for execution (see Live verification). The very
-  next session must re-run the full verification chain before any further Day 10 work is
-  layered on top of unexecuted Day 9 code.
-- `aiosmtplib` exception signatures in `test_email.py` are unverified against the real package —
-  flagged specifically so a failing import on first real pytest run isn't mistaken for a logic bug.
-- No backfill was done (or asked for) for pre-Day-9 accounts without a default channel or
-  pre-Day-9 monitors without routing — both hooks are forward-only, as confirmed with Oryn.
+- **Dev's `FLAP_THRESHOLD=1` (`.env`) makes a plain, non-flapping "opened"/"resolved" notice
+  unreachable in this dev stack** — every monitor's very first incident already crosses the
+  threshold, so the normal per-incident notice is always replaced by a flapping one, and the
+  normal "resolved" notice is always suppressed. This was deliberately set low so flapping itself
+  is fast to test (step 5), but it means the plain-path code (`enqueue_notifications`'s `opened`/
+  `resolved` branch, exercised directly in pytest, just never exercised live in dev as currently
+  configured). Not a product bug — flag for whoever next tunes dev `.env` values.
+- `dev_fixtures.create_user` (used by Playwright's global-setup and the `/_dev/users` endpoint)
+  does not replicate `app/auth/router.py`'s real verify-hook: a dev-created `verified=true` user
+  gets no auto-created default email channel, unlike a real signup→verify flow. No current test
+  depends on this, but it's a latent gap if a future Playwright fixture assumes one exists.
+- A stale `runner_state` row from an old, already-dead runner instance (`last_tick_at` from
+  2026-10-15) was found sitting in the table during this session's investigation — nothing reads
+  or acts on it, but there's no reaper for `runner_state` rows left behind by a runner that was
+  killed hard enough to skip its own shutdown cleanup. Harmless today; worth a cheap TTL-based
+  sweep eventually.
+- `frontend/node_modules` exists on the host (from an earlier host-side Vitest run) — confirmed
+  gitignored and untracked by `git status`; the container uses its own named volume and does not
+  read this directory. No action needed, flagged per this session's instructions.
 
 ### Commit block
 
@@ -324,11 +411,27 @@ git commit -m "day 9: notifier delivery, signed webhooks, channels API + UI, fla
   Drawer primitive, /channels/verify page, monitor-form alert-channel routing, nav entry.
 - Migration 0011: notification_channels.name/is_default/verify_token_hash/verify_expires_at,
   notification_attempts table, revised next_attempt_at index to cover expired sending-leases.
-- Tests: 339 -> ~419 pytest (written, NOT executed -- Docker Desktop was unavailable all
-  session), Vitest 9 -> 13 files / 45 -> 57 tests (executed, passing), tsc + eslint clean.
-- Deviation: could not verify against the running Compose stack (CLAUDE.md workflow rule 3) --
-  Docker Desktop was down throughout. Full pytest/Playwright/live-acceptance run against Postgres
-  + chaos + Mailpit is the required first step of the next session.
+- Fixed a real bug found this session: the runner and notifier processes never imported
+  app.accounts.models (everything pre-Day-9 used raw SQL), so the first ORM flush of a
+  Notification row's account_id FK raised NoReferencedTableError and silently rolled back every
+  incident-notification transaction. Fixed with the same models aggregator import alembic/env.py
+  already uses.
+- Fixed 19 test-authoring bugs surfaced by actually running pytest for the first time this day
+  (CSRF content-type on bodyless POSTs, a nonexistent-route assumption, a test-helper auto-fill
+  defeating its own test, a copy-paste assertion, a missing CSRF fixture, unrealistic None
+  defaults in test_email.py) plus one real app bug (_RESOLVE_INCIDENT_SQL's now() vs
+  clock_timestamp(), same class of issue as Day 8's claim.py).
+- Tests: 339 -> 423 passed, 1 deselected (pytest, executed against real Postgres); Vitest 9 -> 13
+  files / 45 -> 57 tests (executed). Migration 0011 verified: upgrade/check/downgrade/upgrade
+  round trip clean.
+- All 7 live-acceptance steps run against the real stack and passing: outage->email+webhook
+  latency (~0.7s), [500,500,200] retry, 404 permanent failure, notifier-kill lease recovery,
+  flapping started/ended, cap suppression + single cap_reached, db-restart mid-delivery with
+  nothing left stuck in 'sending'.
+- Deviation: Playwright did not complete cleanly (11 passed / 5 failed / 34 not-run on the
+  default suite, 0/1/1 on @screenshots) -- every failure is "Tearing down context exceeded
+  30000ms" under sustained host CPU contention (same class as the documented Day 5b precedent),
+  not a Day 9 regression; the 30s ceiling was deliberately left unraised per standing instruction.
 EOF
 )"
 ```

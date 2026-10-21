@@ -185,11 +185,15 @@ async def test_cross_account_channel_is_404(
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as other:
         await login_as(other, db_session, app.state.clock)
-        resp = await other.get(f"/api/v1/channels/{channel_id}")
-        assert resp.status_code == 404
         other_csrf = await other.get("/api/v1/auth/csrf")
         assert other_csrf.status_code == 200
-        headers = {"X-CSRF-Token": other.cookies.get("cronos_csrf")}
+        headers = {"X-CSRF-Token": other.cookies.get("cronos_csrf"), "Content-Type": "application/json"}
+        # There is no GET /{channel_id} (only the list endpoint and the /secret, /deliveries
+        # sub-resources) -- PATCH and DELETE are the two tenant-checked single-channel routes.
+        patch_resp = await other.patch(
+            f"/api/v1/channels/{channel_id}", json={"name": "renamed"}, headers=headers
+        )
+        assert patch_resp.status_code == 404
         delete_resp = await other.delete(f"/api/v1/channels/{channel_id}", headers=headers)
         assert delete_resp.status_code == 404
 
@@ -208,7 +212,7 @@ async def test_own_verified_account_address_verifies_immediately(
     )
     channel_id = resp.json()["id"]
 
-    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", headers=csrf_headers)
+    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", json={}, headers=csrf_headers)
     assert verify_resp.status_code == 200
     assert verify_resp.json()["verified_at"] is not None
 
@@ -220,7 +224,7 @@ async def test_a_different_address_requires_the_token_link(
     create_resp = await client.post("/api/v1/channels", json=_EMAIL_PAYLOAD, headers=csrf_headers)
     channel_id = create_resp.json()["id"]
 
-    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", headers=csrf_headers)
+    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", json={}, headers=csrf_headers)
     assert verify_resp.status_code == 200
     assert verify_resp.json()["verified_at"] is None  # a link was sent, not immediately verified
 
@@ -233,9 +237,13 @@ async def test_a_different_address_requires_the_token_link(
 
 
 async def test_invalid_verify_email_token_is_rejected(
-    client: AsyncClient, db_session: AsyncSession, app: FastAPI
+    client: AsyncClient, csrf_headers: dict, db_session: AsyncSession, app: FastAPI
 ) -> None:
-    resp = await client.post("/api/v1/channels/verify-email", json={"token": "garbage"})
+    # Unauthenticated-shaped (no login), but still under /api/ and still state-changing, so the
+    # CSRF double-submit header is required regardless -- same precedent as /auth/verify.
+    resp = await client.post(
+        "/api/v1/channels/verify-email", json={"token": "garbage"}, headers=csrf_headers
+    )
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "invalid_token"
 
@@ -253,7 +261,7 @@ async def test_webhook_verify_succeeds_on_2xx(
     )
     channel_id = create_resp.json()["id"]
 
-    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", headers=csrf_headers)
+    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", json={}, headers=csrf_headers)
     assert verify_resp.status_code == 200
     assert verify_resp.json()["verified_at"] is not None
 
@@ -268,7 +276,7 @@ async def test_webhook_verify_fails_on_non_2xx(
     )
     channel_id = create_resp.json()["id"]
 
-    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", headers=csrf_headers)
+    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", json={}, headers=csrf_headers)
     assert verify_resp.status_code == 422
     assert verify_resp.json()["error"]["code"] == "webhook_verify_failed"
 
@@ -289,7 +297,7 @@ async def test_webhook_verify_signature_matches_the_revealed_secret(
     await chaos_control(status_code=200, webhook_secret=secret)
 
     before_log = await chaos_log()
-    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", headers=csrf_headers)
+    verify_resp = await client.post(f"/api/v1/channels/{channel_id}/verify", json={}, headers=csrf_headers)
     assert verify_resp.status_code == 200
 
     after_log = await chaos_log()
@@ -304,7 +312,7 @@ async def test_test_send_requires_verification_first(
     create_resp = await client.post("/api/v1/channels", json=_EMAIL_PAYLOAD, headers=csrf_headers)
     channel_id = create_resp.json()["id"]
 
-    resp = await client.post(f"/api/v1/channels/{channel_id}/test", headers=csrf_headers)
+    resp = await client.post(f"/api/v1/channels/{channel_id}/test", json={}, headers=csrf_headers)
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "channel_unverified"
 
@@ -322,7 +330,7 @@ async def test_rotate_secret_returns_a_new_plaintext_value(
     channel_id = create_resp.json()["id"]
 
     first_reveal = await client.get(f"/api/v1/channels/{channel_id}/secret")
-    rotate_resp = await client.post(f"/api/v1/channels/{channel_id}/rotate-secret", headers=csrf_headers)
+    rotate_resp = await client.post(f"/api/v1/channels/{channel_id}/rotate-secret", json={}, headers=csrf_headers)
     assert rotate_resp.status_code == 200
     second_reveal = await client.get(f"/api/v1/channels/{channel_id}/secret")
 

@@ -19,8 +19,11 @@ async def test_notification_channel_kind_check(db_session: AsyncSession) -> None
 async def test_webhook_channel_requires_secret(db_session: AsyncSession) -> None:
     account = await make_account(db_session)
     with pytest.raises(IntegrityError):
+        # secret=None overrides make_notification_channel's own convenience auto-fill (added so
+        # every other webhook-channel test doesn't have to specify one) -- this test exists
+        # specifically to prove the DB constraint still rejects a secretless webhook row.
         await make_notification_channel(
-            db_session, account.id, kind="webhook", config={"url": "https://example.com"}
+            db_session, account.id, kind="webhook", config={"url": "https://example.com"}, secret=None
         )
     await db_session.rollback()
 

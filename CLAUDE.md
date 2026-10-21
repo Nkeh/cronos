@@ -17,6 +17,8 @@ promise.
    for approval, then build.
 2. **Never run state-changing git commands** (`commit`, `push`, `reset`, `rebase`, `checkout -b`,
    `stash`, `merge`, `tag`). Read-only git (`status`, `diff`, `log`) is fine. Oryn commits manually.
+2a. **Check the Compose stack is up at the start of every session; if it isn't, stop and report
+   before writing code.**
 3. Verify against the **running Compose stack**, not just tests. Show the commands you ran and
    their real output.
 4. If you deviate from the SRS or this file, say so explicitly in the summary with the reason.

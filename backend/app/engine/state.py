@@ -134,7 +134,14 @@ _OPEN_OR_BUMP_INCIDENT_SQL = text(
 
 _RESOLVE_INCIDENT_SQL = text(
     """
-    UPDATE incidents SET resolved_at = now(), resolved_reason = 'recovered'
+    -- clock_timestamp(), not now() -- same root cause as _OPEN_OR_BUMP_INCIDENT_SQL above: now()
+    -- is pinned to transaction start, not the instant this statement runs. A session that applies
+    -- more than one check result without an intervening commit (a real scenario: the flapping
+    -- tests in tests/engine/test_state.py drive several down/up cycles through one db_session)
+    -- would otherwise write a resolved_at stuck at the transaction's start time, which can land
+    -- before this very incident's own started_at and trip ck_incidents_resolved_after_started.
+    -- GREATEST(_, started_at) is the same backstop as the sibling statement, for the same reason.
+    UPDATE incidents SET resolved_at = GREATEST(clock_timestamp(), started_at), resolved_reason = 'recovered'
     WHERE monitor_id = :monitor_id AND resolved_at IS NULL
     RETURNING id
     """

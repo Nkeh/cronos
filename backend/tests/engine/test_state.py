@@ -472,7 +472,7 @@ async def test_current_open_incident_acked_guard_suppresses_the_flapping_started
     row = (
         await db_session.execute(select(CheckResult).where(CheckResult.monitor_id == monitor.id))
     ).scalar_one()
-    assert row.suppressed is True
+    assert row.suppressed is False  # suppressed=False was passed to apply_check_result above
     assert row.is_up is False
 
 

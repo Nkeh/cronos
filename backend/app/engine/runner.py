@@ -20,6 +20,17 @@ from app.core.db import create_engine, create_session_factory, wait_for_database
 from app.core.logging import configure_logging
 from app.core.redis import FailOpenRedis
 from app.core.tick_loop import run_tick_loop
+# Side-effect only: populates Base.metadata with every domain's tables before anything in this
+# process flushes an ORM object. Everything else here (claim, canary, incident/counter writes)
+# goes through raw parameterized SQL and never needed this -- Day 9's enqueue_notifications/
+# enqueue_flapping_notification (via app/engine/state.py) is the first ORM session.add() in the
+# runner's history, and it builds a Notification row with a string ForeignKey("accounts.id").
+# SQLAlchemy resolves that lazily against Base.metadata at flush time, which only has tables for
+# modules this process actually imported -- without this import, "accounts" (and every other
+# domain this process never otherwise touches) isn't in it, and the first such flush raises
+# NoReferencedTableError, silently rolling back the whole check-result transaction every time.
+# Same fix alembic/env.py already applies for autogenerate, same reason.
+from app.db import models as _all_models  # noqa: F401
 from app.engine.canary import CanaryTracker, run_canary_round
 from app.engine.claim import ClaimedMonitor, claim_due_monitors, oldest_due_lag_seconds
 from app.engine.db_bounds import bounded_transaction
