@@ -40,6 +40,16 @@ const AUTH_PAGES: PageSpec[] = [
   { name: 'overview', path: '/' },
   { name: 'monitors-empty', path: '/monitors' },
   { name: 'monitor-new', path: '/monitors/new' },
+  { name: 'channels-empty', path: '/settings/channels' },
+  { name: 'channels-verify', path: '/channels/verify' },
+  {
+    name: 'channels-add-dialog',
+    path: async (page) => {
+      await gotoRetrying(page, '/settings/channels')
+      await page.getByRole('button', { name: 'Add channel' }).click()
+      await page.getByRole('dialog').waitFor()
+    },
+  },
 ]
 
 const SEEDED_PAGES: PageSpec[] = [

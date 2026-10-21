@@ -45,3 +45,31 @@ export function monitorErrorMessage(error: unknown): string {
   }
   return 'Something went wrong. Please try again.'
 }
+
+/** Friendly copy for channel error codes -- covers the same url_* codes as monitors (webhook
+ * URLs go through the identical ssrf_policy save-time path), plus the channel-specific codes
+ * notifications/router.py raises. */
+const CHANNEL_MESSAGES: Record<string, string> = {
+  url_invalid: 'Enter a valid URL.',
+  url_scheme: 'Only http:// and https:// URLs are allowed.',
+  url_credentials: "URLs can't include a username or password.",
+  url_port_blocked: "This URL's port isn't allowed.",
+  url_host_blocked: "This host isn't allowed — it looks like a private or internal address.",
+  url_resolves_private: 'This URL resolves to a private address and can’t be monitored.',
+  validation_error: 'Check the highlighted field and try again.',
+  plan_limit: "You've reached your plan's channel limit.",
+  not_found: 'That channel no longer exists.',
+  email_not_verified: 'Verify your email to manage notification channels.',
+  channel_unverified: 'Verify this channel before sending a test.',
+  webhook_verify_failed: "Couldn't verify the webhook — check the URL and try again.",
+  invalid_token: 'That link is invalid or has expired.',
+  session_required: 'Log in with a session (not an API key) to do this.',
+  rate_limited: 'Too many attempts — wait a moment and try again.',
+}
+
+export function channelErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    return CHANNEL_MESSAGES[error.code] ?? error.message
+  }
+  return 'Something went wrong. Please try again.'
+}

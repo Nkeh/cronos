@@ -19,6 +19,7 @@ def _plan(name: str = "launch") -> PlanLimits:
         alert_emails_per_day=50,
         webhooks_per_day=500,
         max_api_keys=10,
+        max_channels=10,
     )
 
 

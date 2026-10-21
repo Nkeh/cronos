@@ -11,6 +11,8 @@ import { useAuthMe } from '../auth/hooks'
 import { ApiError } from '../../lib/api/errors'
 import { monitorErrorMessage } from '../../lib/api/error-copy'
 import { useCreateMonitor, useMonitor, usePatchMonitor, useUsage } from './hooks'
+import { useChannels, useMonitorChannels } from '../channels/hooks'
+import { setMonitorChannels } from '../../lib/api/channels'
 import type { MonitorMethod } from '../../lib/api/types'
 
 const selectClassName = cn(
@@ -26,6 +28,8 @@ export function MonitorFormPage() {
   const { data: me } = useAuthMe()
   const { data: usage } = useUsage()
   const { data: existing, isLoading: isLoadingExisting } = useMonitor(id)
+  const { data: channels } = useChannels()
+  const { data: routedChannels } = useMonitorChannels(id)
 
   const createMonitor = useCreateMonitor()
   const patchMonitor = usePatchMonitor(id ?? '')
@@ -39,6 +43,8 @@ export function MonitorFormPage() {
   const [timeoutSeconds, setTimeoutSeconds] = useState(10)
   const [confirmThreshold, setConfirmThreshold] = useState(2)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [channelIds, setChannelIds] = useState<string[]>([])
+  const [channelIdsTouched, setChannelIdsTouched] = useState(false)
 
   useEffect(() => {
     if (!existing) return
@@ -50,6 +56,26 @@ export function MonitorFormPage() {
     setTimeoutSeconds(existing.timeout_seconds)
     setConfirmThreshold(existing.confirm_threshold)
   }, [existing])
+
+  // Edit path: once routing loads, show what's actually routed. Create path: pre-select every
+  // default channel client-side -- the real pre-selection already happened server-side (the
+  // account-verify/monitor-create hooks), this just keeps the displayed state honest, and lets
+  // the user adjust it before the first save.
+  useEffect(() => {
+    if (channelIdsTouched) return
+    if (isEdit) {
+      if (routedChannels) setChannelIds(routedChannels.channel_ids)
+    } else if (channels) {
+      setChannelIds(channels.filter((c) => c.is_default).map((c) => c.id))
+    }
+  }, [isEdit, channels, routedChannels, channelIdsTouched])
+
+  function toggleChannel(channelId: string) {
+    setChannelIdsTouched(true)
+    setChannelIds((prev) =>
+      prev.includes(channelId) ? prev.filter((id) => id !== channelId) : [...prev, channelId],
+    )
+  }
 
   const unverified = me ? !me.email_verified : false
   const atLimit = Boolean(
@@ -75,7 +101,14 @@ export function MonitorFormPage() {
       confirm_threshold: confirmThreshold,
     }
     mutation.mutate(payload, {
-      onSuccess: () => navigate('/monitors'),
+      onSuccess: async (monitor) => {
+        // Untouched means "leave whatever routing the server already applied" -- for a new
+        // monitor that's the default-channel hook; for an edit, there's nothing to change.
+        if (channelIdsTouched) {
+          await setMonitorChannels(monitor.id, channelIds).catch(() => undefined)
+        }
+        navigate('/monitors')
+      },
     })
   }
 
@@ -204,6 +237,31 @@ export function MonitorFormPage() {
             </FormField>
           </div>
         )}
+
+        <FormField label="Alert channels" htmlFor="channel-ids">
+          {channels && channels.length > 0 ? (
+            <div id="channel-ids" className="flex flex-col gap-2 rounded-sm border border-border p-3">
+              {channels.map((channel) => (
+                <label key={channel.id} className="flex items-center gap-2 font-body text-sm text-text">
+                  <input
+                    type="checkbox"
+                    checked={channelIds.includes(channel.id)}
+                    onChange={() => toggleChannel(channel.id)}
+                    className="h-4 w-4 rounded-sm border border-border accent-accent-solid"
+                  />
+                  {channel.name}
+                  {channel.is_default && (
+                    <span className="font-body text-xs text-text-muted">(default)</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="font-body text-sm text-text-muted">
+              No channels yet — add one under Account → Notification channels.
+            </p>
+          )}
+        </FormField>
 
         {topLevelError && (
           <p role="alert" className="font-body text-sm text-status-down-text">

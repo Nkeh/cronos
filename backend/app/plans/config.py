@@ -27,6 +27,7 @@ class PlanLimits:
     alert_emails_per_day: int
     webhooks_per_day: int
     max_api_keys: int  # NEW — not in SRS Section 12, flagged as a Day 4 deviation
+    max_channels: int  # NEW — not in SRS Section 12, flagged as a Day 9 deviation
 
 
 PLANS: dict[str, PlanLimits] = {
@@ -42,6 +43,7 @@ PLANS: dict[str, PlanLimits] = {
         alert_emails_per_day=50,
         webhooks_per_day=500,
         max_api_keys=10,
+        max_channels=10,
     ),
 }
 

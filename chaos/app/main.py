@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal
 
@@ -24,6 +27,7 @@ Mode = Literal["up", "down", "slow", "flap", "hang", "redirect", "big", "tls_bad
 _HANG_BACKSTOP_SECONDS = 300
 _HANG_POLL_SECONDS = 0.5
 _BIG_CHUNK_SIZE = 65536
+_WEBHOOK_SIGNATURE_MAX_AGE_SECONDS = 300
 
 
 class ControlEntry(BaseModel):
@@ -34,6 +38,9 @@ class ControlEntry(BaseModel):
     redirect_url: str | None = None
     redirect_status: int = 302
     big_bytes: int = 50 * 1024 * 1024
+    # Day 9: /webhook-only fields, driven through this same /_control machinery.
+    webhook_secret: str | None = None
+    response_sequence: list[int] | None = None
 
 
 class SetControlRequest(BaseModel):
@@ -45,11 +52,14 @@ class SetControlRequest(BaseModel):
     redirect_url: str | None = None
     redirect_status: int = 302
     big_bytes: int = 50 * 1024 * 1024
+    webhook_secret: str | None = None
+    response_sequence: list[int] | None = None
 
 
 _state: dict[str, ControlEntry] = {}
 _request_counts: dict[str, int] = {}
 _webhook_log: list[dict] = []
+_webhook_sequence_index: dict[str, int] = {}
 
 
 def _normalize(path: str) -> str:
@@ -112,8 +122,14 @@ async def set_control(body: SetControlRequest) -> ControlEntry:
         redirect_url=body.redirect_url,
         redirect_status=body.redirect_status,
         big_bytes=body.big_bytes,
+        webhook_secret=body.webhook_secret,
+        response_sequence=body.response_sequence,
     )
-    _state[_normalize(body.path)] = entry
+    key = _normalize(body.path)
+    _state[key] = entry
+    if key == "/webhook":
+        # A fresh programmed sequence always restarts from its first element.
+        _webhook_sequence_index[key] = 0
     return entry
 
 
@@ -128,25 +144,63 @@ async def whoami(request: Request) -> dict:
     }
 
 
+def _sign(secret: str, timestamp: int, body: bytes) -> str:
+    """Independent re-implementation of app/notifier/signing.py's `sign()` -- deliberately not
+    imported, since chaos is a separate deployable with its own pyproject.toml, and duplicating
+    ~3 lines of stdlib hmac/hashlib is what makes the signature test meaningful ("verified by an
+    independent implementation")."""
+    mac = hmac.new(secret.encode("utf-8"), f"{timestamp}.".encode("utf-8") + body, hashlib.sha256)
+    return f"v1={mac.hexdigest()}"
+
+
 @app.post("/webhook")
 async def receive_webhook(request: Request) -> Response:
-    """Minimal stub: logs what arrived and returns a status code configurable through the same
-    /_control machinery as everything else (POST /_control {"path": "/webhook", "mode": "down",
-    "status_code": 500}).
+    """Verifies the HMAC signature (when a secret has been configured via /_control) and rejects
+    timestamps older than 5 minutes. Every delivery is recorded for GET /_webhook/_log. The
+    response status walks a programmable sequence (e.g. [500, 500, 200], clamped to the last
+    entry once exhausted) and honours a configurable delay -- both set through the same
+    /_control machinery as every other mode, for the retry and lease-recovery tests."""
+    key = "/webhook"
+    entry = _state.get(key, ControlEntry())
 
-    DAY 9 TODO: real HMAC-SHA256(secret, timestamp + "." + body) signature verification, once
-    the notifier's signing code exists to test against. For now this only records what arrived.
-    """
+    if entry.delay_ms:
+        await asyncio.sleep(entry.delay_ms / 1000)
+
     body = await request.body()
+    timestamp_header = request.headers.get("X-Cronos-Timestamp")
+    signature_header = request.headers.get("X-Cronos-Signature")
+
+    verified: bool | None = None
+    if entry.webhook_secret and timestamp_header and signature_header:
+        try:
+            timestamp = int(timestamp_header)
+        except ValueError:
+            verified = False
+        else:
+            age = abs(time.time() - timestamp)
+            expected = _sign(entry.webhook_secret, timestamp, body)
+            verified = age <= _WEBHOOK_SIGNATURE_MAX_AGE_SECONDS and hmac.compare_digest(
+                expected, signature_header
+            )
+
     _webhook_log.append(
         {
-            "signature_header": request.headers.get("X-Cronos-Signature"),
+            "delivery_id": request.headers.get("X-Cronos-Delivery"),
+            "event": request.headers.get("X-Cronos-Event"),
+            "signature_header": signature_header,
             "body_length": len(body),
-            "verified": None,
+            "verified": verified,
+            "arrived_at": time.time(),
         }
     )
-    entry = _state.get("/webhook", ControlEntry())
-    return Response(status_code=entry.status_code)
+
+    if entry.response_sequence:
+        idx = _webhook_sequence_index.get(key, 0)
+        status_code = entry.response_sequence[min(idx, len(entry.response_sequence) - 1)]
+        _webhook_sequence_index[key] = idx + 1
+    else:
+        status_code = entry.status_code
+    return Response(status_code=status_code)
 
 
 @app.get("/_webhook/_log")

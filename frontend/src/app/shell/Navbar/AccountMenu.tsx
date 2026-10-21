@@ -29,6 +29,13 @@ export function AccountMenu() {
         >
           {data && <div className="px-3 py-2 font-mono text-xs text-text-muted">{data.email}</div>}
           <DropdownMenu.Separator className="my-1 h-px bg-border" />
+          <DropdownMenu.Item
+            onSelect={() => navigate('/settings/channels')}
+            className="cursor-pointer rounded-sm px-3 py-2 outline-none hover:bg-surface focus:bg-surface"
+          >
+            Notification channels
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-border" />
           {(['system', 'light', 'dark'] as const).map((mode) => (
             <DropdownMenu.Item
               key={mode}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -13,7 +13,8 @@ from app.engine.probe import ProbeResult
 from app.engine.state import apply_check_result
 from app.incidents.models import Incident
 from app.monitors.models import CheckResult, Monitor
-from tests.helpers import make_account, make_monitor, utcnow
+from app.notifications.models import MonitorChannel, Notification
+from tests.helpers import make_account, make_monitor, make_notification_channel, utcnow
 
 _TOLERANCE = timedelta(seconds=2)
 
@@ -192,7 +193,11 @@ async def test_concurrent_threshold_crossings_produce_one_incident(
                 claimed_at=utcnow(),
                 claim_monotonic=0.0,
             )
-            async with bounded_transaction(session, settings):
+            async with bounded_transaction(
+                session,
+                lock_timeout_ms=settings.runner_claim_lock_timeout_ms,
+                statement_timeout_ms=settings.runner_claim_statement_timeout_ms,
+            ):
                 await apply_check_result(
                     session,
                     claimed,
@@ -332,6 +337,137 @@ async def test_suppressed_result_touches_nothing_but_check_results(
     await db_session.refresh(monitor)
     assert monitor.consecutive_failures == 0
     assert monitor.failing_since is None
+
+
+# ---- Day 9 / FR-6.3 flapping ----
+
+
+async def _routed_monitor(db_session: AsyncSession, **monitor_overrides: object) -> Monitor:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id, confirm_threshold=1, **monitor_overrides)
+    channel = await make_notification_channel(db_session, account.id, verified_at=utcnow())
+    db_session.add(MonitorChannel(account_id=account.id, monitor_id=monitor.id, channel_id=channel.id))
+    await db_session.commit()
+    return monitor
+
+
+async def _down_up_cycle(db_session: AsyncSession, claimed: ClaimedMonitor, t: datetime) -> None:
+    await apply_check_result(
+        db_session, claimed, _DOWN, probe_started_at=t, suppressed=False, recheck_delay_seconds=30,
+        flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+    await apply_check_result(
+        db_session, claimed, _UP, probe_started_at=t + timedelta(seconds=1), suppressed=False,
+        recheck_delay_seconds=30, flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+
+
+async def test_third_incident_in_the_window_enters_flapping_and_skips_the_opened_notice(
+    db_session: AsyncSession,
+) -> None:
+    monitor = await _routed_monitor(db_session)
+    claimed = _claimed_for(monitor)
+    t0 = utcnow()
+
+    await _down_up_cycle(db_session, claimed, t0)
+    await _down_up_cycle(db_session, claimed, t0 + timedelta(seconds=10))
+
+    rows = (await db_session.execute(select(Notification))).scalars().all()
+    assert sorted(r.event for r in rows) == ["opened", "opened", "resolved", "resolved"]
+
+    # Third incident in the window: crosses flap_threshold=3 -- flapping_since set, exactly one
+    # 'flapping' (started) notice, the normal 'opened' notice for THIS incident is skipped.
+    outcome3 = await apply_check_result(
+        db_session, claimed, _DOWN, probe_started_at=t0 + timedelta(seconds=20),
+        suppressed=False, recheck_delay_seconds=30, flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+    assert outcome3.incident_opened_id is not None
+
+    await db_session.refresh(monitor)
+    assert monitor.flapping_since is not None
+
+    rows = (await db_session.execute(select(Notification))).scalars().all()
+    assert sorted(r.event for r in rows) == ["flapping", "opened", "opened", "resolved", "resolved"]
+    flapping_rows = [r for r in rows if r.event == "flapping"]
+    assert len(flapping_rows) == 1
+    assert flapping_rows[0].payload["phase"] == "started"
+    assert flapping_rows[0].incident_id is None
+
+
+async def test_while_flapping_further_opens_and_resolves_are_silent(
+    db_session: AsyncSession,
+) -> None:
+    monitor = await _routed_monitor(db_session)
+    claimed = _claimed_for(monitor)
+    t0 = utcnow()
+
+    await _down_up_cycle(db_session, claimed, t0)
+    await _down_up_cycle(db_session, claimed, t0 + timedelta(seconds=10))
+    await apply_check_result(
+        db_session, claimed, _DOWN, probe_started_at=t0 + timedelta(seconds=20),
+        suppressed=False, recheck_delay_seconds=30, flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+    before = (await db_session.execute(select(Notification))).scalars().all()
+    assert len(before) == 5  # 2 opened + 2 resolved + 1 flapping(started)
+
+    # Resolve, then open a 4th incident -- both silent while still flapping.
+    await apply_check_result(
+        db_session, claimed, _UP, probe_started_at=t0 + timedelta(seconds=21),
+        suppressed=False, recheck_delay_seconds=30, flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+    await apply_check_result(
+        db_session, claimed, _DOWN, probe_started_at=t0 + timedelta(seconds=22),
+        suppressed=False, recheck_delay_seconds=30, flap_window_minutes=30, flap_threshold=3,
+    )
+    await db_session.commit()
+
+    after = (await db_session.execute(select(Notification))).scalars().all()
+    assert len(after) == 5
+
+    await db_session.refresh(monitor)
+    assert monitor.flapping_since is not None
+
+
+async def test_current_open_incident_acked_guard_suppresses_the_flapping_started_notice(
+    db_session: AsyncSession,
+) -> None:
+    """FR-5.4's ack guard: the entry code checks whether the incident it JUST opened is already
+    acknowledged before firing the 'started' notice. In the current call graph that incident
+    can't have been acked yet (nothing can acknowledge an incident before it exists) -- this
+    test exercises the guard's own SQL directly, proving it reads back true/false correctly, as
+    documented in app/engine/state.py's _CURRENT_OPEN_INCIDENT_ACKED_SQL comment."""
+    from app.engine.state import _CURRENT_OPEN_INCIDENT_ACKED_SQL
+
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id, confirm_threshold=1)
+    await db_session.commit()
+    claimed = _claimed_for(monitor)
+
+    outcome = await apply_check_result(
+        db_session, claimed, _DOWN, probe_started_at=utcnow(), suppressed=False,
+        recheck_delay_seconds=30,
+    )
+    await db_session.commit()
+    assert outcome.incident_opened_id is not None
+
+    not_acked = (
+        await db_session.execute(_CURRENT_OPEN_INCIDENT_ACKED_SQL, {"monitor_id": monitor.id})
+    ).scalar_one()
+    assert not_acked is False
+
+    incident = await db_session.get(Incident, outcome.incident_opened_id)
+    incident.acknowledged_at = utcnow()
+    await db_session.commit()
+
+    acked = (
+        await db_session.execute(_CURRENT_OPEN_INCIDENT_ACKED_SQL, {"monitor_id": monitor.id})
+    ).scalar_one()
+    assert acked is True
 
     row = (
         await db_session.execute(select(CheckResult).where(CheckResult.monitor_id == monitor.id))

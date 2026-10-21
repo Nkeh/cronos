@@ -32,8 +32,13 @@ async def _cancel_mid_pg_sleep(session_factory) -> None:
     """Mimics _run_one's DB section: open a session, begin a bounded transaction, run a slow
     statement -- then get cancelled while it's still in flight, exactly as asyncio.timeout does
     to a real task whose result write is taking too long."""
+    settings = get_settings()
     async with session_factory() as session:
-        async with bounded_transaction(session, get_settings()):
+        async with bounded_transaction(
+            session,
+            lock_timeout_ms=settings.runner_claim_lock_timeout_ms,
+            statement_timeout_ms=settings.runner_claim_statement_timeout_ms,
+        ):
             await session.execute(text("SELECT pg_sleep(5)"))
 
 
@@ -69,8 +74,13 @@ async def test_repeated_mid_write_cancellation_never_poisons_the_pool(
         written_count = 0
         for item in claimed:
             try:
+                settings = get_settings()
                 async with session_factory() as session:
-                    async with bounded_transaction(session, get_settings()):
+                    async with bounded_transaction(
+                        session,
+                        lock_timeout_ms=settings.runner_claim_lock_timeout_ms,
+                        statement_timeout_ms=settings.runner_claim_statement_timeout_ms,
+                    ):
                         written = await write_result(session, item, _UP_RESULT)
                 if written:
                     written_count += 1

@@ -46,6 +46,26 @@ test.describe('authenticated pages', () => {
       await gotoRetrying(page, '/monitors/new')
       await expectNoSeriousViolations(page)
     })
+
+    test(`axe: /settings/channels empty (${theme})`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme })
+      await gotoRetrying(page, '/settings/channels')
+      await expectNoSeriousViolations(page)
+    })
+
+    test(`axe: /channels/verify (${theme})`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme })
+      await gotoRetrying(page, '/channels/verify')
+      await expectNoSeriousViolations(page)
+    })
+
+    test(`axe: /settings/channels add-channel dialog open (${theme})`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme })
+      await gotoRetrying(page, '/settings/channels')
+      await page.getByRole('button', { name: 'Add channel' }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+      await expectNoSeriousViolations(page)
+    })
   }
 })
 

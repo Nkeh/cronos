@@ -100,3 +100,73 @@ export interface MonitorCreatePayload {
 }
 
 export type MonitorPatchPayload = Partial<MonitorCreatePayload>
+
+export type ChannelKind = 'email' | 'webhook'
+
+export interface ChannelConfig {
+  address?: string
+  url?: string
+}
+
+export interface Channel {
+  id: string
+  kind: ChannelKind
+  name: string
+  config: ChannelConfig
+  is_default: boolean
+  verified_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChannelCreatePayload {
+  kind: ChannelKind
+  name: string
+  config: ChannelConfig
+  is_default?: boolean
+}
+
+export type ChannelPatchPayload = Partial<Omit<ChannelCreatePayload, 'kind'>>
+
+export interface ChannelSecretResponse {
+  secret: string
+}
+
+export interface ChannelTestResponse {
+  ok: boolean
+  status_code: number | null
+  error: string | null
+}
+
+export type DeliveryAttemptOutcome = 'sent' | 'retry' | 'failed'
+
+export interface DeliveryAttempt {
+  id: number
+  attempted_at: string
+  outcome: DeliveryAttemptOutcome
+  status_code: number | null
+  error: string | null
+  duration_ms: number
+}
+
+export type DeliveryStatus = 'pending' | 'sending' | 'sent' | 'failed' | 'suppressed'
+
+export interface Delivery {
+  id: string
+  event: string
+  status: DeliveryStatus
+  attempts: number
+  created_at: string
+  sent_at: string | null
+  last_error: string | null
+  recent_attempts: DeliveryAttempt[]
+}
+
+export interface DeliveryListResponse {
+  items: Delivery[]
+  next_cursor: string | null
+}
+
+export interface MonitorChannelsResponse {
+  channel_ids: string[]
+}

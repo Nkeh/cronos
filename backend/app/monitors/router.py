@@ -15,7 +15,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.models import Account
@@ -29,6 +29,8 @@ from app.engine import ssrf_policy
 from app.incidents.models import Incident
 from app.monitors.models import Monitor
 from app.monitors.schemas import MonitorCreate, MonitorPatch, MonitorPublic
+from app.notifications.models import MonitorChannel, NotificationChannel
+from app.notifications.schemas import MonitorChannelsResponse, MonitorChannelsUpdate
 from app.plans.config import get_plan
 from app.plans.dependencies import check_interval_minimum, check_limit, get_account_for_update
 
@@ -180,6 +182,20 @@ async def create_monitor(
     db.add(monitor)
     await db.flush()
     await _rejitter(db, monitor.id, payload.interval_seconds)
+    # Day 9, confirmed with Oryn: a brand-new monitor auto-routes to every is_default channel on
+    # the account, same transaction, same commit -- so it alerts to the account's default
+    # channel(s) from the moment it's created, with no separate routing step required.
+    default_channel_ids = (
+        await db.execute(
+            select(NotificationChannel.id).where(
+                NotificationChannel.account_id == account.id, NotificationChannel.is_default
+            )
+        )
+    ).scalars().all()
+    db.add_all(
+        MonitorChannel(monitor_id=monitor.id, channel_id=channel_id, account_id=account.id)
+        for channel_id in default_channel_ids
+    )
     await db.commit()
     await db.refresh(monitor)
 
@@ -318,3 +334,54 @@ async def resume_monitor(
     await db.commit()
     await db.refresh(monitor)
     return MonitorPublic.model_validate(monitor)
+
+
+@router.get("/{monitor_id}/channels", response_model=MonitorChannelsResponse)
+async def get_monitor_channels(
+    monitor_id: uuid.UUID,
+    principal: AuthContext = Depends(require_scope("monitors:read")),
+    db: AsyncSession = Depends(get_db_session),
+) -> MonitorChannelsResponse:
+    await _get_owned_monitor(db, principal.user.account_id, monitor_id)
+    channel_ids = (
+        await db.execute(select(MonitorChannel.channel_id).where(MonitorChannel.monitor_id == monitor_id))
+    ).scalars().all()
+    return MonitorChannelsResponse(channel_ids=list(channel_ids))
+
+
+@router.put("/{monitor_id}/channels", response_model=MonitorChannelsResponse)
+async def set_monitor_channels(
+    monitor_id: uuid.UUID,
+    payload: MonitorChannelsUpdate,
+    user: User = Depends(require_verified),
+    _scope: AuthContext = Depends(require_scope("monitors:write")),
+    db: AsyncSession = Depends(get_db_session),
+) -> MonitorChannelsResponse:
+    """Replaces the full routed set in one transaction. Every id in the payload must belong to
+    the caller's account -- a foreign channel id 404s the WHOLE request, never a partial apply."""
+    monitor = await _get_owned_monitor(db, user.account_id, monitor_id)
+
+    requested_ids = set(payload.channel_ids)
+    if requested_ids:
+        owned_ids = set(
+            (
+                await db.execute(
+                    select(NotificationChannel.id).where(
+                        NotificationChannel.account_id == user.account_id,
+                        NotificationChannel.id.in_(requested_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if owned_ids != requested_ids:
+            raise ApiError(404, "not_found", "One or more channels not found.")
+
+    await db.execute(delete(MonitorChannel).where(MonitorChannel.monitor_id == monitor.id))
+    db.add_all(
+        MonitorChannel(monitor_id=monitor.id, channel_id=channel_id, account_id=user.account_id)
+        for channel_id in requested_ids
+    )
+    await db.commit()
+    return MonitorChannelsResponse(channel_ids=list(requested_ids))

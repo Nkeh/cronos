@@ -29,7 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.claim import ClaimedMonitor
 from app.engine.probe import ProbeResult
 from app.engine.results import write_result
-from app.notifications.service import IncidentSubject, enqueue_notifications
+from app.notifications.service import (
+    IncidentSubject,
+    enqueue_flapping_notification,
+    enqueue_notifications,
+)
 
 # `calc`'s freshness/failure/recovery logic is expressed once and reused across every CASE --
 # kept as a single bound expression (fragment) rather than retyped per-branch.
@@ -39,13 +43,13 @@ _APPLY_SQL = text(
     f"""
     WITH cur AS (
         SELECT consecutive_failures, confirm_threshold, status, failing_since, last_state_at,
-               account_id
+               account_id, flapping_since
         FROM monitors WHERE id = :monitor_id AND is_active
         FOR UPDATE
     ),
     calc AS (
         SELECT
-            account_id, confirm_threshold,
+            account_id, confirm_threshold, flapping_since,
             {_FRESH_EXPR} AS fresh,
             CASE WHEN NOT {_FRESH_EXPR} THEN consecutive_failures
                  WHEN :is_up THEN 0
@@ -85,7 +89,7 @@ _APPLY_SQL = text(
                               ELSE monitors.last_state_at END
     FROM calc WHERE monitors.id = :monitor_id
     RETURNING monitors.id, calc.account_id, calc.fresh, calc.threshold_just_crossed,
-              calc.new_failing_since
+              calc.new_failing_since, calc.flapping_since
     """
 )
 
@@ -136,6 +140,32 @@ _RESOLVE_INCIDENT_SQL = text(
     """
 )
 
+# Day 9 / FR-6.3 flapping. flapping_since itself is read (not set) by _APPLY_SQL above -- these
+# three run only on the branch that just opened a BRAND NEW incident (threshold_just_crossed and
+# was_inserted), never on a bump of an already-open one (which never enqueues anything either).
+_FLAP_INCIDENT_COUNT_SQL = text(
+    """
+    SELECT count(*) FROM incidents
+    WHERE monitor_id = :monitor_id
+      AND started_at > now() - make_interval(mins => :window_minutes)
+    """
+)
+
+_SET_FLAPPING_SINCE_SQL = text("UPDATE monitors SET flapping_since = now() WHERE id = :monitor_id")
+
+# FR-5.4: the incident this check just opened cannot itself be acknowledged yet (nothing can
+# acknowledge an incident before it exists) -- this guards the literal rule as written, not a
+# scenario this code path can currently reach, in case acknowledgement ever becomes settable
+# earlier in the open path.
+_CURRENT_OPEN_INCIDENT_ACKED_SQL = text(
+    """
+    SELECT EXISTS (
+        SELECT 1 FROM incidents
+        WHERE monitor_id = :monitor_id AND resolved_at IS NULL AND acknowledged_at IS NOT NULL
+    )
+    """
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CheckOutcome:
@@ -163,6 +193,8 @@ async def apply_check_result(
     probe_started_at: datetime,
     suppressed: bool,
     recheck_delay_seconds: int,
+    flap_window_minutes: int = 30,
+    flap_threshold: int = 3,
 ) -> CheckOutcome:
     """Applies one probe result to the state machine. Suppressed (canary-degraded) results
     write a check_results row and touch nothing else. A stale result (probe_started_at not
@@ -231,28 +263,56 @@ async def apply_check_result(
         ).first()
         if incident_row is not None and incident_row.was_inserted:
             incident_opened_id = incident_row.id
-            await enqueue_notifications(
-                session,
-                row.account_id,
-                incident_opened_id,
-                IncidentSubject(kind="monitor", id=claimed.id),
-                "opened",
-                _notification_payload(claimed, result, row.new_failing_since),
-            )
+            subject = IncidentSubject(kind="monitor", id=claimed.id)
+            if row.flapping_since is not None:
+                # Already flapping (an earlier incident in this same episode already fired the
+                # one "started" notice) -- every further open/resolve cycle is silent until the
+                # exit sweep (app/engine/maintenance.py) decides it's been stable long enough.
+                pass
+            else:
+                flap_count = (
+                    await session.execute(
+                        _FLAP_INCIDENT_COUNT_SQL,
+                        {"monitor_id": claimed.id, "window_minutes": flap_window_minutes},
+                    )
+                ).scalar_one()
+                if flap_count >= flap_threshold:
+                    await session.execute(_SET_FLAPPING_SINCE_SQL, {"monitor_id": claimed.id})
+                    acked = (
+                        await session.execute(
+                            _CURRENT_OPEN_INCIDENT_ACKED_SQL, {"monitor_id": claimed.id}
+                        )
+                    ).scalar_one()
+                    if not acked:
+                        await enqueue_flapping_notification(
+                            session, row.account_id, subject, phase="started"
+                        )
+                else:
+                    await enqueue_notifications(
+                        session,
+                        row.account_id,
+                        incident_opened_id,
+                        subject,
+                        "opened",
+                        _notification_payload(claimed, result, row.new_failing_since),
+                    )
     else:
         resolved_row = (
             await session.execute(_RESOLVE_INCIDENT_SQL, {"monitor_id": claimed.id})
         ).first()
         if resolved_row is not None:
             incident_resolved_id = resolved_row.id
-            await enqueue_notifications(
-                session,
-                row.account_id,
-                incident_resolved_id,
-                IncidentSubject(kind="monitor", id=claimed.id),
-                "resolved",
-                _notification_payload(claimed, result, None),
-            )
+            if row.flapping_since is None:
+                await enqueue_notifications(
+                    session,
+                    row.account_id,
+                    incident_resolved_id,
+                    IncidentSubject(kind="monitor", id=claimed.id),
+                    "resolved",
+                    _notification_payload(claimed, result, None),
+                )
+            # else: flapping -- the resolved notice is suppressed too, per the brief, until the
+            # exit sweep's one "ended" notice.
 
     return CheckOutcome(
         written=True,

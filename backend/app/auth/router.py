@@ -71,6 +71,7 @@ from app.core.email import (
 )
 from app.core.errors import ApiError
 from app.core.redis import FailOpenRedis
+from app.notifications.models import NotificationChannel
 
 logger = structlog.get_logger()
 
@@ -174,6 +175,19 @@ async def verify(
     user = await db.get(User, token_row.user_id)
     user.email_verified_at = clock.now()
     token_row.used_at = clock.now()
+    # Day 9, confirmed with Oryn: verifying the account email auto-creates a verified `email`
+    # channel for that address with is_default=true, same transaction -- the account alerts
+    # somewhere from the moment it can run monitors at all, with no separate setup step.
+    db.add(
+        NotificationChannel(
+            account_id=user.account_id,
+            kind="email",
+            name="Account email",
+            config={"address": user.email},
+            is_default=True,
+            verified_at=clock.now(),
+        )
+    )
     await db.commit()
     logger.info("email_verified", user_id=str(user.id))
     return VerifyResponse(message="Email verified.")

@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.notifications.models import MonitorChannel, Notification
-from app.notifications.service import IncidentSubject, enqueue_notifications
+from app.notifications.service import (
+    IncidentSubject,
+    enqueue_cap_reached_once_per_day,
+    enqueue_flapping_notification,
+    enqueue_notifications,
+)
 from tests.helpers import make_account, make_incident, make_monitor, make_notification_channel
 
 
@@ -113,3 +118,87 @@ async def test_rolls_back_together_with_the_caller_transaction(db_session: Async
     await db_session.rollback()
 
     assert (await db_session.execute(select(Notification))).first() is None
+
+
+# ---- Day 9: flapping notices ----
+
+
+async def test_enqueue_flapping_notification_sets_incident_id_null_and_phase(
+    db_session: AsyncSession,
+) -> None:
+    account = await make_account(db_session)
+    monitor = await make_monitor(db_session, account.id)
+    channel = await make_notification_channel(
+        db_session, account.id, verified_at=datetime.now(timezone.utc)
+    )
+    await _route(db_session, account.id, monitor.id, channel.id)
+    await db_session.commit()
+
+    count = await enqueue_flapping_notification(
+        db_session, account.id, IncidentSubject(kind="monitor", id=monitor.id), phase="started"
+    )
+    await db_session.commit()
+
+    assert count == 1
+    row = (await db_session.execute(select(Notification))).scalar_one()
+    assert row.event == "flapping"
+    assert row.incident_id is None
+    assert row.payload["phase"] == "started"
+    assert row.payload["subject_id"] == str(monitor.id)
+
+
+# ---- Day 9: once-per-day cap_reached dedup (FR-6.5) ----
+
+
+async def test_cap_reached_fans_out_to_every_verified_channel_of_that_kind(
+    db_session: AsyncSession,
+) -> None:
+    account = await make_account(db_session)
+    email_a = await make_notification_channel(
+        db_session, account.id, verified_at=datetime.now(timezone.utc)
+    )
+    email_b = await make_notification_channel(
+        db_session, account.id, verified_at=datetime.now(timezone.utc)
+    )
+    unverified = await make_notification_channel(db_session, account.id, verified_at=None)
+    await db_session.commit()
+
+    count = await enqueue_cap_reached_once_per_day(db_session, account.id, "email")
+    await db_session.commit()
+
+    assert count == 2
+    rows = (await db_session.execute(select(Notification))).scalars().all()
+    assert {r.channel_id for r in rows} == {email_a.id, email_b.id}
+    assert unverified.id not in {r.channel_id for r in rows}
+    assert all(r.event == "cap_reached" for r in rows)
+    assert all(r.incident_id is None for r in rows)
+
+
+async def test_cap_reached_is_enqueued_at_most_once_per_day(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    await make_notification_channel(db_session, account.id, verified_at=datetime.now(timezone.utc))
+    await db_session.commit()
+
+    first = await enqueue_cap_reached_once_per_day(db_session, account.id, "email")
+    await db_session.commit()
+    second = await enqueue_cap_reached_once_per_day(db_session, account.id, "email")
+    await db_session.commit()
+
+    assert first == 1
+    assert second == 0
+    rows = (await db_session.execute(select(Notification))).scalars().all()
+    assert len(rows) == 1
+
+
+async def test_cap_reached_kinds_are_independent(db_session: AsyncSession) -> None:
+    account = await make_account(db_session)
+    await make_notification_channel(db_session, account.id, verified_at=datetime.now(timezone.utc))
+    await db_session.commit()
+
+    await enqueue_cap_reached_once_per_day(db_session, account.id, "email")
+    webhook_count = await enqueue_cap_reached_once_per_day(db_session, account.id, "webhook")
+    await db_session.commit()
+
+    # No verified webhook channel exists -- fans out to zero, but is not blocked by the
+    # email kind's own enqueue today.
+    assert webhook_count == 0

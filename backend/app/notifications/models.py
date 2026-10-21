@@ -4,9 +4,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     LargeBinary,
@@ -29,6 +31,7 @@ class NotificationChannel(Base):
         CheckConstraint(
             "kind <> 'webhook' OR secret IS NOT NULL", name="webhook_secret_required"
         ),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 60", name="name_length"),
         UniqueConstraint("account_id", "id", name="uq_notification_channels_account_id_id"),
     )
 
@@ -39,9 +42,13 @@ class NotificationChannel(Base):
         UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'"))
     secret: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    is_default: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
     verified_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    verify_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verify_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
 
@@ -124,12 +131,18 @@ class Notification(Base):
         Index(
             "ix_notifications_next_attempt_at",
             "next_attempt_at",
-            postgresql_where=text("status = 'pending'"),
+            postgresql_where=text("status IN ('pending', 'sending')"),
         ),
         Index(
             "ix_notifications_channel_id_created_at",
             "channel_id",
             column("created_at").desc(),
+        ),
+        Index(
+            "ix_notifications_account_id_sent_at",
+            "account_id",
+            "sent_at",
+            postgresql_where=text("status = 'sent'"),
         ),
     )
 
@@ -151,3 +164,33 @@ class Notification(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class NotificationAttempt(Base):
+    """One row per delivery attempt (FR-6.6's delivery log). bigint identity PK -- a deviation
+    from CLAUDE.md's stated bigint exceptions (check_results, heartbeat_pings), same rationale
+    (high-volume, append-only), flagged in docs/progress/day-09.md."""
+
+    __tablename__ = "notification_attempts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["notification_id"],
+            ["notifications.id"],
+            ondelete="CASCADE",
+            name="fk_notification_attempts_notification_id_notifications",
+        ),
+        CheckConstraint("outcome IN ('sent', 'retry', 'failed')", name="outcome"),
+        Index(
+            "ix_notification_attempts_notification_id_attempted_at",
+            "notification_id",
+            "attempted_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    notification_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(nullable=False, server_default=text("now()"))
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)

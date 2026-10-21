@@ -25,6 +25,7 @@ from app.engine.claim import ClaimedMonitor, claim_due_monitors, oldest_due_lag_
 from app.engine.db_bounds import bounded_transaction
 from app.engine.host_cap import check_host_cap
 from app.engine.http_probe import HttpProbe
+from app.engine.maintenance import run_flapping_exit_sweep
 from app.engine.probe import Probe, ProbeResult, StubProbe
 from app.engine.runner_state import delete_runner_state, upsert_runner_state
 from app.engine.state import apply_check_result
@@ -76,6 +77,10 @@ class _RunnerContext:
         self.canary = CanaryTracker()
         self.canary_tasks: set[asyncio.Task[None]] = set()
         self.last_canary_round_at = 0.0
+        # Day 9: flapping exit sweep, same elapsed-time-gate / own-task-set pattern as the canary
+        # round above, for the same reason (never a second run_tick_loop).
+        self.flapping_sweep_tasks: set[asyncio.Task[None]] = set()
+        self.last_flapping_sweep_at = 0.0
 
 
 async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
@@ -105,7 +110,11 @@ async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
                 seconds=probe_start_monotonic - claimed.claim_monotonic
             )
             async with ctx.session_factory() as session:
-                async with bounded_transaction(session, ctx.settings):
+                async with bounded_transaction(
+                    session,
+                    lock_timeout_ms=ctx.settings.runner_claim_lock_timeout_ms,
+                    statement_timeout_ms=ctx.settings.runner_claim_statement_timeout_ms,
+                ):
                     outcome = await apply_check_result(
                         session,
                         claimed,
@@ -113,6 +122,8 @@ async def _run_one(ctx: _RunnerContext, claimed: ClaimedMonitor) -> None:
                         probe_started_at=probe_started_at,
                         suppressed=not ctx.canary.ok,
                         recheck_delay_seconds=ctx.settings.recheck_delay_seconds,
+                        flap_window_minutes=ctx.settings.flap_window_minutes,
+                        flap_threshold=ctx.settings.flap_threshold,
                     )
             if not outcome.written:
                 logger.info("check_result_discarded_monitor_inactive", monitor_id=str(claimed.id))
@@ -142,7 +153,11 @@ async def _claim_tick(ctx: _RunnerContext) -> list[ClaimedMonitor]:
     free_slots = ctx.settings.runner_concurrency - len(ctx.in_flight_tasks)
     try:
         async with ctx.session_factory() as session:
-            async with bounded_transaction(session, ctx.settings):
+            async with bounded_transaction(
+                session,
+                lock_timeout_ms=ctx.settings.runner_claim_lock_timeout_ms,
+                statement_timeout_ms=ctx.settings.runner_claim_statement_timeout_ms,
+            ):
                 return await claim_due_monitors(session, free_slots)
     except _RUNNER_TXN_ERRORS as exc:
         logger.warning("claim_failed", error=str(exc))
@@ -155,7 +170,11 @@ async def _report_runner_state(ctx: _RunnerContext) -> bool:
     reporting must not go stale just because a claim attempt hit a timeout or a DB blip."""
     try:
         async with ctx.session_factory() as session:
-            async with bounded_transaction(session, ctx.settings):
+            async with bounded_transaction(
+                session,
+                lock_timeout_ms=ctx.settings.runner_claim_lock_timeout_ms,
+                statement_timeout_ms=ctx.settings.runner_claim_statement_timeout_ms,
+            ):
                 lag_seconds = await oldest_due_lag_seconds(session)
                 await upsert_runner_state(
                     session,
@@ -189,10 +208,39 @@ def _maybe_schedule_canary_round(ctx: _RunnerContext) -> None:
     task.add_done_callback(ctx.canary_tasks.discard)
 
 
+async def _run_flapping_sweep(ctx: _RunnerContext) -> None:
+    try:
+        async with ctx.session_factory() as session:
+            async with bounded_transaction(
+                session,
+                lock_timeout_ms=ctx.settings.runner_claim_lock_timeout_ms,
+                statement_timeout_ms=ctx.settings.runner_claim_statement_timeout_ms,
+            ):
+                result = await run_flapping_exit_sweep(session, ctx.settings.flap_stable_minutes)
+        if result.lock_acquired and result.monitors_cleared:
+            logger.info("flapping_sweep_cleared", monitors_cleared=result.monitors_cleared)
+    except _RUNNER_TXN_ERRORS as exc:
+        logger.warning("flapping_sweep_failed", error=str(exc))
+
+
+def _maybe_schedule_flapping_sweep(ctx: _RunnerContext) -> None:
+    """Same fire-and-forget, elapsed-time-gated, own-task-set shape as
+    _maybe_schedule_canary_round -- see that function's docstring for why this is never a second
+    run_tick_loop."""
+    now = time.monotonic()
+    if now - ctx.last_flapping_sweep_at < ctx.settings.flapping_sweep_interval_seconds:
+        return
+    ctx.last_flapping_sweep_at = now
+    task = asyncio.create_task(_run_flapping_sweep(ctx))
+    ctx.flapping_sweep_tasks.add(task)
+    task.add_done_callback(ctx.flapping_sweep_tasks.discard)
+
+
 async def on_tick(ctx: _RunnerContext) -> None:
     failures_before = ctx.consecutive_db_failures
 
     _maybe_schedule_canary_round(ctx)
+    _maybe_schedule_flapping_sweep(ctx)
 
     claimed = await _claim_tick(ctx)
     for monitor in claimed:
@@ -263,7 +311,7 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
             on_tick=_on_tick,
         )
     finally:
-        drain_tasks = ctx.in_flight_tasks | ctx.canary_tasks
+        drain_tasks = ctx.in_flight_tasks | ctx.canary_tasks | ctx.flapping_sweep_tasks
         if drain_tasks:
             done, pending = await asyncio.wait(
                 drain_tasks, timeout=settings.runner_drain_seconds
@@ -274,7 +322,11 @@ async def run(*, settings: Settings | None = None, probe: Probe | None = None) -
 
         try:
             async with ctx.session_factory() as session:
-                async with bounded_transaction(session, settings):
+                async with bounded_transaction(
+                    session,
+                    lock_timeout_ms=settings.runner_claim_lock_timeout_ms,
+                    statement_timeout_ms=settings.runner_claim_statement_timeout_ms,
+                ):
                     await delete_runner_state(session, runner_id)
         except _RUNNER_TXN_ERRORS as exc:
             logger.warning("runner_state_delete_failed", error=str(exc))

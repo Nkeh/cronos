@@ -176,7 +176,11 @@ async def test_claim_lock_timeout_gives_up_and_a_later_claim_succeeds(
     try:
         start = asyncio.get_running_loop().time()
         with pytest.raises(DBAPIError):
-            async with bounded_transaction(db_session, fast_timeout_settings):
+            async with bounded_transaction(
+                db_session,
+                lock_timeout_ms=fast_timeout_settings.runner_claim_lock_timeout_ms,
+                statement_timeout_ms=fast_timeout_settings.runner_claim_statement_timeout_ms,
+            ):
                 await claim_due_monitors(db_session, free_slots=10)
         elapsed = asyncio.get_running_loop().time() - start
         assert elapsed < 3, "lock_timeout should have given up well under the test's own ceiling"

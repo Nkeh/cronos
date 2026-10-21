@@ -140,9 +140,45 @@ class Settings(BaseSettings):
     recheck_delay_seconds: int = 30  # First failure -> re-check this soon, before confirming.
     canary_interval_seconds: int = 30  # Per SRS Section 7.
 
+    # ---- Notifier (Day 9) ----
+    notifier_concurrency: int = 10
+    notifier_drain_seconds: int = 8
+    notifier_lease_seconds: int = 60
+    notifier_claim_lock_timeout_ms: int = 2000
+    notifier_claim_statement_timeout_ms: int = 5000
+    notifier_pool_size: int = 10
+    notifier_max_overflow: int = 5
+    notifier_pool_timeout_seconds: int = 5
+    # Per-task deadline margin on top of webhook_timeout_seconds -- mirrors
+    # runner_task_margin_seconds's role for probes; also the effective ceiling on one email send
+    # (aiosmtplib/Mailpit have no per-notifier timeout setting of their own to add onto).
+    notifier_task_margin_seconds: int = 10
+    # 1m, 5m, 15m, 1h per SRS Section 7 -- a comma-separated setting (not a fixed tuple) so dev/
+    # test .env files can shorten it; after this many entries are exhausted (notifier_max_attempts
+    # total attempts), the row is permanently failed.
+    notifier_backoff_seconds: str = "60,300,900,3600"
+    notifier_max_attempts: int = 5
+
+    webhook_timeout_seconds: int = 5  # SRS Section 10/13 -- fixed, not per-channel like monitors.
+    webhook_body_cap_bytes: int = 4096
+
+    channel_verify_token_ttl_hours: int = 24
+    channel_verify_rate_limit_max: int = 5  # 5/min per channel, for verify-send and test-send.
+    channel_verify_rate_limit_window_seconds: int = 60
+
+    # ---- Flapping (Day 9, SRS Section 7 / FR-6.3) ----
+    flap_window_minutes: int = 30
+    flap_threshold: int = 3
+    flap_stable_minutes: int = 30
+    flapping_sweep_interval_seconds: int = 60
+
     @property
     def canary_urls_list(self) -> tuple[str, ...]:
         return tuple(u.strip() for u in self.canary_urls.split(",") if u.strip())
+
+    @property
+    def notifier_backoff_seconds_list(self) -> tuple[int, ...]:
+        return tuple(int(s) for s in self.notifier_backoff_seconds.split(",") if s.strip())
 
     @property
     def trusted_proxy_ips_set(self) -> frozenset[str]:
@@ -169,6 +205,11 @@ class Settings(BaseSettings):
             )
         if not self.secret_key or self.secret_key == EXAMPLE_SECRET_KEY:
             reasons.append("SECRET_KEY is missing or still the example placeholder value")
+        if not self.encryption_key or self.encryption_key == EXAMPLE_SECRET_KEY:
+            reasons.append(
+                "ENCRYPTION_KEY is missing or still the example placeholder value; webhook "
+                "secrets would be \"encrypted\" with a key published in this codebase"
+            )
         if self.debug:
             reasons.append("DEBUG is enabled")
         if not self.cookie_secure:

@@ -223,8 +223,11 @@ async def make_notification_channel(
     defaults: dict[str, Any] = {
         "account_id": account_id,
         "kind": "email",
+        "name": f"channel-{uuid.uuid4().hex[:8]}",
         "config": {"address": f"{uuid.uuid4().hex}@example.com"},
     }
+    if overrides.get("kind") == "webhook" and "secret" not in overrides:
+        defaults["secret"] = uuid.uuid4().bytes
     defaults.update(overrides)
     channel = NotificationChannel(**defaults)
     session.add(channel)

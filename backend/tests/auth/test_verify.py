@@ -13,6 +13,7 @@ from app.auth.models import User
 from app.auth.security import hash_token, new_raw_token
 from app.core.clock import SystemClock
 from app.core.email import FakeEmailSender
+from app.notifications.models import NotificationChannel
 from tests.helpers import make_account, make_auth_token, make_user
 
 VALID_PASSWORD = "correct-horse-battery-staple"
@@ -49,6 +50,29 @@ async def test_verify_success_sets_email_verified_at(
 
     user = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
     assert user.email_verified_at is not None
+
+
+async def test_verify_success_creates_a_default_verified_email_channel(
+    client: AsyncClient, csrf_headers: dict, app: FastAPI, db_session: AsyncSession
+) -> None:
+    """Day 9, confirmed with Oryn: verifying the account email auto-creates a verified `email`
+    channel for that address with is_default=true."""
+    email = _unique_email()
+    token = await _signup_and_get_token(client, app, csrf_headers, email)
+
+    resp = await client.post("/api/v1/auth/verify", json={"token": token}, headers=csrf_headers)
+    assert resp.status_code == 200
+
+    user = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
+    channel = (
+        await db_session.execute(
+            select(NotificationChannel).where(NotificationChannel.account_id == user.account_id)
+        )
+    ).scalar_one()
+    assert channel.kind == "email"
+    assert channel.config == {"address": email}
+    assert channel.is_default is True
+    assert channel.verified_at is not None
 
 
 async def test_verify_replay_rejected(client: AsyncClient, csrf_headers: dict, app: FastAPI) -> None:

@@ -32,6 +32,25 @@ def test_refuses_when_secret_key_is_the_example_value() -> None:
         settings.check_production_guard()
 
 
+def test_refuses_when_encryption_key_is_the_example_value() -> None:
+    settings = _production_settings(encryption_key="change-me-dev-only-not-for-production")
+    with pytest.raises(ConfigurationError, match="ENCRYPTION_KEY"):
+        settings.check_production_guard()
+
+
+def test_refuses_when_encryption_key_is_missing() -> None:
+    settings = _production_settings(encryption_key="")
+    with pytest.raises(ConfigurationError, match="ENCRYPTION_KEY"):
+        settings.check_production_guard()
+
+
+def test_allows_a_real_encryption_key() -> None:
+    # The baseline _production_settings() already sets a real-looking value with zero
+    # overrides -- this just makes that passing case explicit.
+    settings = _production_settings()
+    settings.check_production_guard()
+
+
 def test_refuses_when_debug_is_enabled() -> None:
     settings = _production_settings(debug=True)
     with pytest.raises(ConfigurationError, match="DEBUG"):

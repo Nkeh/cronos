@@ -22,6 +22,7 @@ from app.core.openapi import custom_openapi
 from app.core.redis import FailOpenRedis
 from app.incidents.router import router as incidents_router
 from app.monitors.router import router as monitors_router
+from app.notifications.router import router as channels_router
 
 logger = structlog.get_logger()
 
@@ -73,6 +74,7 @@ def create_app(
     app.include_router(accounts_router)
     app.include_router(monitors_router)
     app.include_router(incidents_router)
+    app.include_router(channels_router)
     if settings.env == "development":
         # Dev-only fixture endpoints for Playwright (no Docker access from the
         # pw-tests container) — never imported, let alone mounted, outside
@@ -123,7 +125,20 @@ def create_app(
         if not runner_row.fresh:
             return JSONResponse(status_code=503, content={"status": "degraded", "checks": checks})
 
-        # TODO (Day 9): also fail readiness if the outbox's oldest pending row is over 5 minutes old.
+        # Day 9: advisory only, same reasoning as canary above -- a backlogged outbox means the
+        # notifier needs attention, not that this api process should drop out of rotation.
+        async with app.state.engine.connect() as conn:
+            oldest_pending_seconds = (
+                await conn.execute(
+                    text(
+                        "SELECT extract(epoch FROM now() - min(created_at)) "
+                        "FROM notifications WHERE status = 'pending'"
+                    )
+                )
+            ).scalar_one()
+        checks["outbox"] = (
+            "ok" if oldest_pending_seconds is None or oldest_pending_seconds < 300 else "stale"
+        )
 
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
 

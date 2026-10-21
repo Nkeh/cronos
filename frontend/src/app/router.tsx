@@ -38,6 +38,15 @@ const IncidentDetailPage = lazy(() =>
   })),
 )
 
+const ChannelsPage = lazy(() =>
+  import('../features/channels/ChannelsPage').then((m) => ({ default: m.ChannelsPage })),
+)
+const ChannelVerifyPage = lazy(() =>
+  import('../pages/channels-verify/ChannelVerifyPage').then((m) => ({
+    default: m.ChannelVerifyPage,
+  })),
+)
+
 // Statically resolved by Vite (`import.meta.env.DEV` is a build-time constant), so the ternary's
 // false branch — including the dynamic import() itself — is dead-code-eliminated in production.
 const DesignPreviewPage = import.meta.env.DEV
@@ -90,6 +99,8 @@ export function AppRouter() {
                 <PlaceholderPage eyebrow="What the world sees" title="Status pages." day={11} />
               }
             />
+            <Route path="/settings/channels" element={<ChannelsPage />} />
+            <Route path="/channels/verify" element={<ChannelVerifyPage />} />
           </Route>
 
           {import.meta.env.DEV && DesignPreviewPage && (

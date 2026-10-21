@@ -34,12 +34,14 @@ from app.auth.models import ApiKey
 from app.core.errors import ApiError
 from app.heartbeats.models import Heartbeat
 from app.monitors.models import Monitor
+from app.notifications.models import NotificationChannel
 from app.plans.config import PlanLimits, get_plan
 
 _RESOURCE_MODELS: dict[str, type] = {
     "monitors": Monitor,
     "heartbeats": Heartbeat,
     "api_keys": ApiKey,
+    "channels": NotificationChannel,
 }
 
 
